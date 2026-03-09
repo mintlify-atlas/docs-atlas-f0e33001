@@ -1,0 +1,729 @@
+---
+title: Security
+description: RBAC, admission policies, network policies, and security best practices
+---
+
+# Security
+
+Security is built into every layer of Datum Cloud. This guide covers authentication, authorization, admission control, and security best practices.
+
+## Security Architecture
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key">
+    IAM integration with GitHub OAuth for user identity
+  </Card>
+  
+  <Card title="Authorization" icon="lock">
+    Kubernetes RBAC for role-based access control
+  </Card>
+  
+  <Card title="Admission Control" icon="shield-check">
+    ValidatingAdmissionPolicy for resource validation
+  </Card>
+  
+  <Card title="Network Security" icon="network-wired">
+    Built-in encryption and network policies
+  </Card>
+</CardGroup>
+
+## Authentication
+
+### User Authentication
+
+Datum Cloud uses IAM integration for user authentication:
+
+- **GitHub OAuth**: Users sign in with GitHub accounts
+- **User Resources**: Each user gets a `User` resource in Kubernetes
+- **Session Management**: JWT tokens for API access
+
+**User resource:**
+
+```yaml
+apiVersion: iam.datumapis.com/v1alpha1
+kind: User
+metadata:
+  name: user-john-doe
+spec:
+  email: john.doe@example.com
+  givenName: John
+  familyName: Doe
+status:
+  state: Active
+  registrationApproval: Approved
+```
+
+### Service Accounts
+
+For programmatic access, use Kubernetes service accounts:
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ci-deployer
+  namespace: project-production-env
+```
+
+**Create token:**
+
+```bash
+kubectl create token ci-deployer -n project-production-env --duration=8760h
+```
+
+## Authorization (RBAC)
+
+### Built-in Roles
+
+Datum provides three organization roles defined in `config/assignable-organization-roles/roles/`:
+
+<Tabs>
+  <Tab title="Owner">
+    **Full administrative access**
+    
+    From `datum-cloud-owner.yaml:1`:
+    ```yaml
+    apiVersion: iam.miloapis.com/v1alpha1
+    kind: Role
+    metadata:
+      name: owner
+      annotations:
+        kubernetes.io/description: "Full access to all Datum Cloud resources"
+    spec:
+      inheritedRoles:
+        - name: viewer
+          namespace: datum-cloud
+        - name: core-admin
+          namespace: milo-system
+        - name: networking.datumapis.com-admin
+          namespace: milo-system
+        - name: resourcemanager.miloapis.com-project-admin
+          namespace: milo-system
+        - name: resourcemanager.miloapis.com-organization-admin
+          namespace: milo-system
+    ```
+    
+    **Permissions:**
+    - Create/delete organizations
+    - Manage organization members
+    - Create/delete projects
+    - Manage all resources
+    - Configure quotas
+  </Tab>
+  
+  <Tab title="Editor">
+    **Read-write access to resources**
+    
+    **Permissions:**
+    - Create/update/delete workloads
+    - Create/update/delete networks
+    - Create/update/delete gateways
+    - View all resources
+    - Cannot manage members or delete organization
+  </Tab>
+  
+  <Tab title="Viewer">
+    **Read-only access**
+    
+    **Permissions:**
+    - View all resources
+    - List organizations, projects
+    - Cannot create or modify anything
+  </Tab>
+</Tabs>
+
+### Assigning Roles
+
+Roles are assigned via `OrganizationMembership`:
+
+```yaml
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: OrganizationMembership
+metadata:
+  name: membership-jane-smith
+  namespace: organization-my-company
+spec:
+  organizationRef:
+    name: my-company
+  userRef:
+    name: user-jane-smith
+  roles:
+    - name: editor  # or owner, viewer
+      namespace: datum-cloud
+```
+
+### Checking Permissions
+
+```bash
+# Check if you can perform an action
+kubectl auth can-i create workloads -n project-production-env
+kubectl auth can-i delete projects
+kubectl auth can-i update networks -n project-staging-env
+
+# Check what you can do
+kubectl auth can-i --list -n project-production-env
+
+# Check as another user
+kubectl auth can-i create workloads --as=jane.smith@example.com -n project-production-env
+```
+
+### Custom Roles
+
+Create custom roles for specific permissions:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: workload-manager
+  namespace: project-production-env
+rules:
+  # Can manage workloads
+  - apiGroups: ["compute.datumapis.com"]
+    resources: ["workloads"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  
+  # Can view networks
+  - apiGroups: ["networking.datumapis.com"]
+    resources: ["networks"]
+    verbs: ["get", "list", "watch"]
+  
+  # Cannot manage gateways
+```
+
+**Bind to user:**
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: jane-workload-manager
+  namespace: project-production-env
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: workload-manager
+subjects:
+  - kind: User
+    name: jane.smith@example.com
+    apiGroup: rbac.authorization.k8s.io
+```
+
+## Admission Control
+
+Datum uses `ValidatingAdmissionPolicy` for resource validation.
+
+### Organization Name Protection
+
+From `config/services/resourcemanager.miloapis.com/validation/organization-update-policy.yaml:1`:
+
+```yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: "disallow-personal-org-name-change"
+spec:
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["resourcemanager.miloapis.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["UPDATE"]
+        resources: ["organizations"]
+  validations:
+    - expression: |
+        object.spec.type != 'Personal' || 
+        oldObject.metadata.annotations['kubernetes.io/display-name'] == 
+        object.metadata.annotations['kubernetes.io/display-name']
+      message: "The display name of a personal organization cannot be changed."
+```
+
+**What it does:**
+- Prevents changing display name of Personal organizations
+- Protects user identity association
+- Enforced at API level
+
+### Project Name Validation
+
+From `config/services/resourcemanager.miloapis.com/validation/project-name-validation-policy.yaml:1`:
+
+```yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: "validate-project-name"
+spec:
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["resourcemanager.miloapis.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE"]
+        resources: ["projects"]
+  validations:
+    # Minimum length
+    - expression: "size(object.metadata.name) >= 6"
+      message: "Project name is too short. Must be at least 6 characters."
+    
+    # Maximum length
+    - expression: "size(object.metadata.name) <= 30"
+      message: "Project name is too long. Must not exceed 30 characters."
+    
+    # Reserved words
+    - expression: "!object.metadata.name.contains('datum')"
+      message: "Project name contains reserved word 'datum'."
+```
+
+**What it validates:**
+- Name length (6-30 characters)
+- No reserved words
+- Format requirements
+
+### Creating Custom Admission Policies
+
+Create policies for custom validation:
+
+```yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: require-network-labels
+spec:
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["networking.datumapis.com"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["networks"]
+  validations:
+    # Require environment label
+    - expression: "has(object.metadata.labels.environment)"
+      message: "Networks must have 'environment' label."
+    
+    # Environment must be valid
+    - expression: |
+        object.metadata.labels.environment in ['production', 'staging', 'development']
+      message: "Environment must be production, staging, or development."
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: require-network-labels-binding
+spec:
+  policyName: require-network-labels
+  validationActions: [Deny]
+```
+
+## Network Security
+
+### Built-in Encryption
+
+Datum provides network-level encryption that cannot be disabled:
+
+- All traffic between components is encrypted
+- TLS for control plane communication
+- Encrypted network overlays
+- No unencrypted data in transit
+
+### Network Policies
+
+Control traffic between workloads using `NetworkPolicy`:
+
+```yaml
+# Deny all by default
+apiVersion: networking.datumapis.com/v1alpha1
+kind: NetworkPolicy
+metadata:
+  name: deny-all
+  namespace: project-production-env
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# Allow frontend to backend
+apiVersion: networking.datumapis.com/v1alpha1
+kind: NetworkPolicy
+metadata:
+  name: frontend-to-backend
+  namespace: project-production-env
+spec:
+  podSelector:
+    matchLabels:
+      tier: backend
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: frontend
+      ports:
+        - protocol: TCP
+          port: 8080
+---
+# Allow backend to database
+apiVersion: networking.datumapis.com/v1alpha1
+kind: NetworkPolicy
+metadata:
+  name: backend-to-database
+  namespace: project-production-env
+spec:
+  podSelector:
+    matchLabels:
+      tier: database
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: backend
+      ports:
+        - protocol: TCP
+          port: 5432
+```
+
+### Kubernetes Network Policies
+
+Enable network policies for metrics endpoint (from `config/network-policy/`):
+
+```bash
+kubectl apply -k config/network-policy
+```
+
+## Pod Security
+
+### Security Context
+
+Datum controller runs with restrictive security context (from `config/manager/manager.yaml:43`):
+
+```yaml
+securityContext:
+  # Pod-level security
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containers:
+  - name: datum-controller-manager
+    # Container-level security
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - "ALL"
+```
+
+**What this means:**
+- Cannot run as root
+- No privilege escalation
+- All capabilities dropped
+- Seccomp profile applied
+
+### Pod Security Standards
+
+Datum adheres to the "restricted" Pod Security Standard:
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: datum-system
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+```
+
+## Secrets Management
+
+### Storing Secrets
+
+```bash
+# Create secret from file
+kubectl create secret generic db-credentials \
+  --from-file=username=./username.txt \
+  --from-file=password=./password.txt \
+  -n project-production-env
+
+# Create secret from literals
+kubectl create secret generic api-keys \
+  --from-literal=api-key=abc123 \
+  --from-literal=api-secret=xyz789 \
+  -n project-production-env
+
+# Create TLS secret
+kubectl create secret tls tls-cert \
+  --cert=path/to/cert.pem \
+  --key=path/to/key.pem \
+  -n project-production-env
+```
+
+### Using Secrets in Workloads
+
+```yaml
+apiVersion: compute.datumapis.com/v1alpha1
+kind: Workload
+metadata:
+  name: web-app
+spec:
+  template:
+    spec:
+      # Environment variables from secret
+      env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: url
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: api-keys
+              key: api-key
+      
+      # Mount secret as files
+      volumes:
+        - name: tls-certs
+          secret:
+            secretName: tls-cert
+      
+      volumeMounts:
+        - name: tls-certs
+          mountPath: /etc/tls
+          readOnly: true
+```
+
+### External Secrets
+
+Integrate with external secret managers:
+
+<Tabs>
+  <Tab title="External Secrets Operator">
+    ```yaml
+    apiVersion: external-secrets.io/v1beta1
+    kind: SecretStore
+    metadata:
+      name: vault-backend
+      namespace: project-production-env
+    spec:
+      provider:
+        vault:
+          server: "https://vault.example.com"
+          path: "secret"
+          auth:
+            kubernetes:
+              mountPath: "kubernetes"
+              role: "my-role"
+    ---
+    apiVersion: external-secrets.io/v1beta1
+    kind: ExternalSecret
+    metadata:
+      name: db-credentials
+      namespace: project-production-env
+    spec:
+      refreshInterval: 1h
+      secretStoreRef:
+        name: vault-backend
+        kind: SecretStore
+      target:
+        name: db-credentials
+      data:
+        - secretKey: username
+          remoteRef:
+            key: database/credentials
+            property: username
+        - secretKey: password
+          remoteRef:
+            key: database/credentials
+            property: password
+    ```
+  </Tab>
+  
+  <Tab title="Sealed Secrets">
+    ```bash
+    # Install sealed-secrets controller
+    kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.24.0/controller.yaml
+    
+    # Create sealed secret
+    kubectl create secret generic db-credentials \
+      --from-literal=password=mypassword \
+      --dry-run=client -o yaml | \
+    kubeseal -o yaml > sealed-secret.yaml
+    
+    # Apply sealed secret (safe to commit)
+    kubectl apply -f sealed-secret.yaml
+    ```
+  </Tab>
+</Tabs>
+
+## Audit Logging
+
+### Enable Kubernetes Audit Logging
+
+Configure audit policy:
+
+```yaml
+apiVersion: audit.k8s.io/v1
+kind: Policy
+rules:
+  # Log datum resource changes
+  - level: RequestResponse
+    resources:
+      - group: "resourcemanager.miloapis.com"
+      - group: "networking.datumapis.com"
+      - group: "compute.datumapis.com"
+  
+  # Log authentication/authorization
+  - level: Metadata
+    omitStages:
+      - RequestReceived
+```
+
+### View Audit Logs
+
+```bash
+# Location depends on cluster setup
+# GKE
+gcloud logging read 'resource.type="k8s_cluster" AND protoPayload.resourceName:"datum"' --limit 100
+
+# EKS
+aws logs tail /aws/eks/cluster-name/cluster --follow
+
+# Self-hosted
+sudo journalctl -u kube-apiserver | grep datum
+```
+
+## Security Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Principle of least privilege" icon="shield">
+    Grant minimum required permissions. Use Viewer role by default.
+  </Card>
+  
+  <Card title="Enable RBAC auditing" icon="list-check">
+    Regularly audit role assignments and permissions.
+  </Card>
+  
+  <Card title="Rotate credentials" icon="rotate">
+    Regularly rotate secrets, tokens, and certificates.
+  </Card>
+  
+  <Card title="Use namespaces" icon="layer-group">
+    Isolate resources in project namespaces.
+  </Card>
+  
+  <Card title="Enable network policies" icon="network-wired">
+    Use NetworkPolicy to restrict traffic.
+  </Card>
+  
+  <Card title="Scan images" icon="magnifying-glass">
+    Scan workload images for vulnerabilities.
+  </Card>
+  
+  <Card title="Monitor security events" icon="bell">
+    Alert on suspicious activity.
+  </Card>
+  
+  <Card title="Keep updated" icon="arrow-up">
+    Regularly update Datum components.
+  </Card>
+</CardGroup>
+
+## Security Checklist
+
+### Pre-Production
+
+- [ ] Review all RBAC role assignments
+- [ ] Enable audit logging
+- [ ] Configure network policies
+- [ ] Set up secret management
+- [ ] Enable Pod Security Standards
+- [ ] Configure admission policies
+- [ ] Set resource limits
+- [ ] Enable metrics and monitoring
+
+### Production
+
+- [ ] Use TLS for all external endpoints
+- [ ] Rotate credentials monthly
+- [ ] Review audit logs weekly
+- [ ] Scan images for CVEs
+- [ ] Monitor for security events
+- [ ] Backup etcd regularly
+- [ ] Test disaster recovery
+- [ ] Document security procedures
+
+## Troubleshooting
+
+### Permission denied errors
+
+```bash
+# Check your permissions
+kubectl auth can-i create workloads -n project-production-env
+
+# Check role bindings
+kubectl get rolebindings -n project-production-env
+kubectl describe rolebinding <binding-name> -n project-production-env
+
+# Check cluster role bindings
+kubectl get clusterrolebindings | grep datum
+```
+
+### Admission webhook denials
+
+```bash
+# Check admission policies
+kubectl get validatingadmissionpolicies
+
+# Describe policy
+kubectl describe validatingadmissionpolicy validate-project-name
+
+# Check policy bindings
+kubectl get validatingadmissionpolicybindings
+```
+
+### Network policy issues
+
+```bash
+# Verify CNI supports network policies
+kubectl get networkpolicies -n project-production-env
+
+# Test connectivity
+kubectl run -it --rm debug --image=busybox -n project-production-env -- sh
+wget -O- http://backend-service:8080
+
+# Temporarily disable for testing
+kubectl delete networkpolicy deny-all -n project-production-env
+```
+
+## Compliance
+
+### SOC 2 Compliance
+
+- Audit logging enabled
+- RBAC enforced
+- Encryption in transit
+- Access reviews
+- Change management
+
+### GDPR Compliance
+
+- User data encryption
+- Access controls
+- Audit trails
+- Data retention policies
+- Right to deletion
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Managing Resources" icon="terminal" href="/operations/managing-resources">
+    Learn resource management with RBAC
+  </Card>
+  <Card title="Monitoring" icon="chart-line" href="/operations/monitoring">
+    Monitor security events
+  </Card>
+  <Card title="Organizations" icon="building" href="/concepts/organizations">
+    Organization membership and roles
+  </Card>
+  <Card title="Configuration" icon="gear" href="/deployment/configuration">
+    Security configuration options
+  </Card>
+</CardGroup>

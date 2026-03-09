@@ -1,0 +1,497 @@
+---
+title: Installation
+description: How to install Datum Cloud components
+---
+
+# Installation
+
+This guide covers installing Datum Cloud components. For most users, using the hosted Datum Cloud at [cloud.datum.net](https://cloud.datum.net) is recommended. This guide is for self-hosted deployments or contributing to development.
+
+## Installation Options
+
+<CardGroup cols={2}>
+  <Card title="Datum Cloud (Hosted)" icon="cloud" href="https://cloud.datum.net">
+    **Recommended for most users**
+    
+    No installation needed. Sign up and start using Datum immediately.
+  </Card>
+  
+  <Card title="Self-Hosted" icon="server">
+    **For advanced users**
+    
+    Install Datum components in your own Kubernetes cluster.
+  </Card>
+</CardGroup>
+
+## Prerequisites
+
+Before installing Datum, ensure you have:
+
+<Steps>
+  <Step title="Kubernetes cluster">
+    A running Kubernetes cluster (v1.28 or later recommended)
+    
+    See [Kubernetes Setup Guide](/deployment/kubernetes-setup) for details.
+  </Step>
+  
+  <Step title="kubectl installed">
+    ```bash
+    kubectl version --client
+    ```
+    
+    Install from [kubernetes.io/docs/tasks/tools](https://kubernetes.io/docs/tasks/tools/).
+  </Step>
+  
+  <Step title="Cluster admin access">
+    ```bash
+    kubectl auth can-i create namespaces --all-namespaces
+    ```
+    
+    Should return `yes`.
+  </Step>
+</Steps>
+
+## Installation Methods
+
+### Method 1: Using Pre-built Manifests
+
+The easiest way to install Datum is using the consolidated YAML manifests.
+
+<Steps>
+  <Step title="Download installation manifest">
+    ```bash
+    curl -Lo datum-install.yaml https://github.com/datum-cloud/datum/releases/latest/download/install.yaml
+    ```
+  </Step>
+  
+  <Step title="Review the manifest">
+    ```bash
+    less datum-install.yaml
+    ```
+    
+    Check that resources match your requirements.
+  </Step>
+  
+  <Step title="Apply the manifest">
+    ```bash
+    kubectl apply -f datum-install.yaml
+    ```
+  </Step>
+  
+  <Step title="Verify installation">
+    ```bash
+    kubectl get pods -n datum-system
+    ```
+    
+    Wait until all pods are `Running`.
+  </Step>
+</Steps>
+
+### Method 2: Using Kustomize
+
+For more control over the installation, use Kustomize.
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/datum-cloud/datum.git
+    cd datum
+    ```
+  </Step>
+  
+  <Step title="Review configuration">
+    ```bash
+    cat config/default/kustomization.yaml
+    ```
+    
+    From `config/default/kustomization.yaml:1`:
+    ```yaml
+    namespace: datum-system
+    namePrefix: datum-
+    
+    resources:
+      - ../rbac
+      - ../manager
+      - metrics_service.yaml
+    ```
+  </Step>
+  
+  <Step title="Install CRDs">
+    ```bash
+    kubectl apply -k config/crd
+    ```
+  </Step>
+  
+  <Step title="Install Datum components">
+    ```bash
+    kubectl apply -k config/default
+    ```
+  </Step>
+  
+  <Step title="Verify installation">
+    ```bash
+    kubectl get deployments -n datum-system
+    ```
+  </Step>
+</Steps>
+
+### Method 3: Using Helm (Coming Soon)
+
+<Info>
+Helm chart support is planned for a future release. Track progress in the [enhancements repo](https://link.datum.net/enhancements).
+</Info>
+
+## Installation Components
+
+The installation includes:
+
+### Core Components
+
+<Tabs>
+  <Tab title="Datum Controller Manager">
+    The main controller managing Datum-specific resources.
+    
+    **Deployment:** `datum-controller-manager`
+    
+    **Namespace:** `datum-system`
+    
+    **Image:** `ghcr.io/datum-cloud/datum:latest`
+    
+    From `config/manager/manager.yaml:108`:
+    ```yaml
+    image: ghcr.io/datum-cloud/datum:latest
+    ```
+  </Tab>
+  
+  <Tab title="RBAC Resources">
+    Service accounts, roles, and role bindings:
+    
+    - `datum-controller-manager` ServiceAccount
+    - `datum-manager-role` ClusterRole
+    - `datum-leader-election-role` Role
+    - Metric server roles
+  </Tab>
+  
+  <Tab title="Custom Resource Definitions">
+    CRDs for Datum resources:
+    
+    - Organizations
+    - Projects
+    - OrganizationMemberships
+    - ResourceGrants
+    - ResourceClaims
+    - ResourceRegistrations
+    - Quota policies
+  </Tab>
+  
+  <Tab title="Services">
+    - `datum-controller-manager-metrics-service`: Prometheus metrics
+  </Tab>
+</Tabs>
+
+### Optional Components
+
+<Tabs>
+  <Tab title="Prometheus Monitoring">
+    Enable Prometheus ServiceMonitor:
+    
+    ```bash
+    # Uncomment prometheus in config/default/kustomization.yaml
+    kubectl apply -k config/prometheus
+    ```
+  </Tab>
+  
+  <Tab title="Network Policies">
+    Enable network policies for metrics endpoint:
+    
+    ```bash
+    kubectl apply -k config/network-policy
+    ```
+  </Tab>
+  
+  <Tab title="Email Templates">
+    Email templates for user notifications:
+    
+    ```bash
+    kubectl apply -k config/email-templates
+    ```
+  </Tab>
+</Tabs>
+
+## Verify Installation
+
+### Check Pod Status
+
+```bash
+kubectl get pods -n datum-system
+```
+
+**Expected output:**
+
+```
+NAME                                         READY   STATUS    RESTARTS   AGE
+datum-controller-manager-7d8c9b4f5d-x2k9p   1/1     Running   0          2m
+```
+
+### Check Logs
+
+```bash
+kubectl logs -n datum-system -l control-plane=controller-manager
+```
+
+**Healthy logs show:**
+
+```
+INFO	Starting controller manager
+INFO	Starting workers	controller	personal-organization
+INFO	Started workers	controller	personal-organization
+```
+
+### Verify CRDs
+
+```bash
+kubectl get crds | grep datumapis.com
+```
+
+**Expected CRDs:**
+
+```
+organizations.resourcemanager.datumapis.com
+projects.resourcemanager.datumapis.com
+organizationmemberships.resourcemanager.datumapis.com
+networks.networking.datumapis.com
+workloads.compute.datumapis.com
+...
+```
+
+### Test Resource Creation
+
+```bash
+# Create a test organization
+cat <<EOF | kubectl apply -f -
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Organization
+metadata:
+  name: test-org
+  annotations:
+    kubernetes.io/display-name: "Test Organization"
+spec:
+  type: Standard
+EOF
+
+# Verify it was created
+kubectl get organizations test-org
+
+# Clean up
+kubectl delete organization test-org
+```
+
+## Configuration
+
+Datum uses environment variables for configuration. Default values are set in `config/manager/manager.yaml:71`:
+
+```yaml
+env:
+  - name: METRICS_BIND_ADDRESS
+    value: "0"
+  - name: HEALTH_PROBE_BIND_ADDRESS
+    value: ":8081"
+  - name: LEADER_ELECT
+    value: "true"
+  - name: LEADER_ELECTION_ID
+    value: "81afa9db.datumapis.com"
+  - name: LEADER_ELECTION_LEASE_DURATION
+    value: "15s"
+  - name: LEADER_ELECTION_RENEW_DEADLINE
+    value: "10s"
+  - name: LEADER_ELECTION_RETRY_PERIOD
+    value: "2s"
+  - name: ENABLE_HTTP2
+    value: "false"
+```
+
+See [Configuration Guide](/deployment/configuration) for customization options.
+
+## Upgrading
+
+### Upgrade to Latest Version
+
+<Steps>
+  <Step title="Download latest manifest">
+    ```bash
+    curl -Lo datum-install.yaml https://github.com/datum-cloud/datum/releases/latest/download/install.yaml
+    ```
+  </Step>
+  
+  <Step title="Review changes">
+    ```bash
+    kubectl diff -f datum-install.yaml
+    ```
+  </Step>
+  
+  <Step title="Apply upgrade">
+    ```bash
+    kubectl apply -f datum-install.yaml
+    ```
+  </Step>
+  
+  <Step title="Monitor rollout">
+    ```bash
+    kubectl rollout status deployment/datum-controller-manager -n datum-system
+    ```
+  </Step>
+</Steps>
+
+### Upgrade from Source
+
+```bash
+cd datum
+git pull origin main
+kubectl apply -k config/default
+```
+
+## Uninstalling
+
+<Warning>
+**Uninstalling Datum will:**
+- Delete all Datum CRDs
+- Delete all Organizations, Projects, and resources
+- Remove the datum-system namespace
+- **Cannot be undone**
+
+Ensure you have backups before proceeding!
+</Warning>
+
+### Uninstall using manifests
+
+```bash
+kubectl delete -f datum-install.yaml
+```
+
+### Uninstall using Kustomize
+
+```bash
+kubectl delete -k config/default
+kubectl delete -k config/crd
+```
+
+## Building from Source
+
+### Prerequisites
+
+- Go 1.24 or later
+- Docker or Podman
+- make
+
+### Build Steps
+
+<Steps>
+  <Step title="Clone repository">
+    ```bash
+    git clone https://github.com/datum-cloud/datum.git
+    cd datum
+    ```
+  </Step>
+  
+  <Step title="Run tests">
+    ```bash
+    make test
+    ```
+  </Step>
+  
+  <Step title="Build binary">
+    ```bash
+    make build
+    ```
+    
+    Binary is created at `bin/manager`.
+  </Step>
+  
+  <Step title="Build Docker image">
+    ```bash
+    make docker-build IMG=my-registry/datum:dev
+    ```
+  </Step>
+  
+  <Step title="Push image">
+    ```bash
+    make docker-push IMG=my-registry/datum:dev
+    ```
+  </Step>
+  
+  <Step title="Deploy">
+    ```bash
+    cd config/manager && kustomize edit set image controller=my-registry/datum:dev
+    kubectl apply -k config/default
+    ```
+  </Step>
+</Steps>
+
+**Available Make targets from** `Makefile:22`:
+
+```bash
+make help               # Show all targets
+make build              # Build manager binary
+make test               # Run tests
+make docker-build       # Build Docker image
+make docker-push        # Push Docker image
+make deploy             # Deploy to cluster
+make manifests          # Generate manifests
+make install            # Install CRDs
+make uninstall          # Uninstall CRDs
+```
+
+## Troubleshooting
+
+### Installation fails
+
+```bash
+# Check Kubernetes version
+kubectl version
+
+# Check cluster access
+kubectl auth can-i create namespaces
+
+# Check for existing resources
+kubectl get namespaces | grep datum
+```
+
+### Pods not starting
+
+```bash
+# Check pod status
+kubectl describe pod -n datum-system -l control-plane=controller-manager
+
+# Check events
+kubectl get events -n datum-system --sort-by='.lastTimestamp'
+
+# Check image pull
+kubectl get pods -n datum-system -o jsonpath='{.items[*].status.containerStatuses[*].image}'
+```
+
+### CRDs not installed
+
+```bash
+# Manually install CRDs
+kubectl apply -k config/crd
+
+# Or from remote
+kubectl apply -f https://github.com/datum-cloud/datum/releases/latest/download/crds.yaml
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Kubernetes Setup" icon="dharmachakra" href="/deployment/kubernetes-setup">
+    Prepare your Kubernetes cluster for Datum
+  </Card>
+  <Card title="Configuration" icon="gear" href="/deployment/configuration">
+    Customize Datum installation
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Start using Datum Cloud
+  </Card>
+  <Card title="Operations" icon="screwdriver-wrench" href="/operations/managing-resources">
+    Learn operational procedures
+  </Card>
+</CardGroup>

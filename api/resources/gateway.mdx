@@ -1,0 +1,521 @@
+---
+title: Gateway API
+description: Gateway API resources for exposing services
+---
+
+## Overview
+
+Datum Cloud uses the Kubernetes Gateway API to expose services and manage ingress traffic. The Gateway API provides a modern, extensible way to configure load balancing, routing, and traffic management.
+
+<Note>
+  Gateway API resources are part of the standard Kubernetes Gateway API (`gateway.networking.k8s.io/v1`).
+</Note>
+
+## Gateway API Resources
+
+The Gateway API consists of three main resources:
+
+1. **GatewayClass** - Defines the gateway implementation (e.g., GCP Load Balancer, Nginx)
+2. **Gateway** - Deploys a load balancer instance
+3. **HTTPRoute** - Routes HTTP traffic to services
+
+## GatewayClass
+
+Defines the class of gateway implementation to use.
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: datum-gateway
+spec:
+  controllerName: datum.net/gateway-controller
+  description: "Datum Cloud gateway implementation"
+```
+
+### GatewayClass Fields
+
+<ParamField path="spec.controllerName" type="string" required>
+  The name of the controller that implements this gateway class.
+  
+  **Example:** `datum.net/gateway-controller`
+</ParamField>
+
+<ParamField path="spec.description" type="string">
+  Human-readable description of the gateway class.
+</ParamField>
+
+<ParamField path="spec.parametersRef" type="object">
+  Reference to provider-specific configuration parameters.
+</ParamField>
+
+## Gateway
+
+Deploys an instance of a load balancer.
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: my-gateway
+  namespace: project-myproject
+spec:
+  gatewayClassName: datum-gateway
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+  - name: https
+    protocol: HTTPS
+    port: 443
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: tls-cert
+```
+
+### Gateway Metadata
+
+<ParamField path="metadata.name" type="string" required>
+  The name of the gateway. Must be unique within the namespace.
+</ParamField>
+
+<ParamField path="metadata.namespace" type="string" required>
+  The project namespace. Format: `project-<project-name>`
+</ParamField>
+
+### Gateway Spec
+
+<ParamField path="spec.gatewayClassName" type="string" required>
+  Reference to the GatewayClass to use.
+</ParamField>
+
+<ParamField path="spec.listeners" type="array" required>
+  List of listeners that define how to accept traffic.
+  
+  <Expandable title="Listener fields">
+    <ParamField path="name" type="string" required>
+      Unique name for this listener.
+    </ParamField>
+    
+    <ParamField path="protocol" type="string" required>
+      Protocol to use (HTTP, HTTPS, TCP, UDP, TLS).
+    </ParamField>
+    
+    <ParamField path="port" type="integer" required>
+      Port number to listen on.
+    </ParamField>
+    
+    <ParamField path="hostname" type="string">
+      Hostname to match (for HTTP/HTTPS).
+    </ParamField>
+    
+    <ParamField path="tls" type="object">
+      TLS configuration for HTTPS listeners.
+      
+      <Expandable title="TLS fields">
+        <ParamField path="mode" type="string">
+          TLS mode: Terminate, Passthrough.
+        </ParamField>
+        
+        <ParamField path="certificateRefs" type="array">
+          References to TLS certificate secrets.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    
+    <ParamField path="allowedRoutes" type="object">
+      Restrictions on which routes can attach to this listener.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.addresses" type="array">
+  Requested addresses for the gateway (e.g., static IPs).
+</ParamField>
+
+### Gateway Status
+
+<ResponseField name="status.conditions" type="array">
+  Conditions describing the gateway state.
+  
+  **Common conditions:**
+  - `Accepted`: Gateway configuration is valid
+  - `Programmed`: Gateway is configured in the data plane
+  - `Ready`: Gateway is ready to accept traffic
+</ResponseField>
+
+<ResponseField name="status.addresses" type="array">
+  Assigned addresses for the gateway.
+  
+  Each address includes:
+  - `type`: Address type (IPAddress, Hostname)
+  - `value`: The actual address value
+</ResponseField>
+
+<ResponseField name="status.listeners" type="array">
+  Status for each listener.
+  
+  Each listener status includes:
+  - `name`: Listener name
+  - `supportedKinds`: Route kinds this listener supports
+  - `attachedRoutes`: Number of routes attached
+  - `conditions`: Listener-specific conditions
+</ResponseField>
+
+## HTTPRoute
+
+Routes HTTP traffic from a Gateway to backend services.
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: web-route
+  namespace: project-myproject
+spec:
+  parentRefs:
+  - name: my-gateway
+  hostnames:
+  - www.example.com
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api
+    backendRefs:
+    - name: api-service
+      port: 8080
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: web-service
+      port: 80
+```
+
+### HTTPRoute Metadata
+
+<ParamField path="metadata.name" type="string" required>
+  The name of the route. Must be unique within the namespace.
+</ParamField>
+
+<ParamField path="metadata.namespace" type="string" required>
+  The project namespace. Format: `project-<project-name>`
+</ParamField>
+
+### HTTPRoute Spec
+
+<ParamField path="spec.parentRefs" type="array" required>
+  References to Gateways this route should attach to.
+  
+  <Expandable title="ParentRef fields">
+    <ParamField path="name" type="string" required>
+      Name of the Gateway.
+    </ParamField>
+    
+    <ParamField path="namespace" type="string">
+      Namespace of the Gateway (defaults to route namespace).
+    </ParamField>
+    
+    <ParamField path="sectionName" type="string">
+      Specific listener name to attach to.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.hostnames" type="array">
+  Hostnames this route should match.
+  
+  **Examples:** `www.example.com`, `*.example.com`
+</ParamField>
+
+<ParamField path="spec.rules" type="array">
+  List of routing rules.
+  
+  <Expandable title="Rule fields">
+    <ParamField path="matches" type="array">
+      Conditions to match incoming requests.
+      
+      <Expandable title="Match fields">
+        <ParamField path="path" type="object">
+          Path matching criteria.
+          
+          - `type`: PathPrefix, Exact, or RegularExpression
+          - `value`: Path pattern to match
+        </ParamField>
+        
+        <ParamField path="headers" type="array">
+          Header matching criteria.
+        </ParamField>
+        
+        <ParamField path="queryParams" type="array">
+          Query parameter matching criteria.
+        </ParamField>
+        
+        <ParamField path="method" type="string">
+          HTTP method (GET, POST, etc.).
+        </ParamField>
+      </Expandable>
+    </ParamField>
+    
+    <ParamField path="filters" type="array">
+      Request/response modification filters.
+      
+      **Filter types:**
+      - RequestHeaderModifier
+      - ResponseHeaderModifier
+      - RequestRedirect
+      - URLRewrite
+    </ParamField>
+    
+    <ParamField path="backendRefs" type="array" required>
+      Backend services to route traffic to.
+      
+      <Expandable title="BackendRef fields">
+        <ParamField path="name" type="string" required>
+          Name of the Service.
+        </ParamField>
+        
+        <ParamField path="port" type="integer" required>
+          Service port number.
+        </ParamField>
+        
+        <ParamField path="weight" type="integer" default="1">
+          Traffic weight for load balancing.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+### HTTPRoute Status
+
+<ResponseField name="status.parents" type="array">
+  Status for each parent Gateway.
+  
+  Each parent status includes:
+  - `parentRef`: Reference to the parent Gateway
+  - `conditions`: Route attachment conditions
+  - `controllerName`: Controller managing this route
+</ResponseField>
+
+## Examples
+
+### Simple HTTP Gateway
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: http-gateway
+  namespace: project-myproject
+spec:
+  gatewayClassName: datum-gateway
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: my-app
+  namespace: project-myproject
+spec:
+  parentRefs:
+  - name: http-gateway
+  rules:
+  - backendRefs:
+    - name: my-service
+      port: 8080
+```
+
+### HTTPS Gateway with TLS
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: https-gateway
+  namespace: project-myproject
+spec:
+  gatewayClassName: datum-gateway
+  listeners:
+  - name: https
+    protocol: HTTPS
+    port: 443
+    hostname: www.example.com
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: example-com-tls
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: secure-app
+  namespace: project-myproject
+spec:
+  parentRefs:
+  - name: https-gateway
+  hostnames:
+  - www.example.com
+  rules:
+  - backendRefs:
+    - name: web-service
+      port: 80
+```
+
+### Advanced Routing with Path-Based Rules
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: multi-service-route
+  namespace: project-myproject
+spec:
+  parentRefs:
+  - name: my-gateway
+  hostnames:
+  - app.example.com
+  rules:
+  # API traffic
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /api/v1
+    backendRefs:
+    - name: api-v1-service
+      port: 8080
+  
+  # Admin traffic
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /admin
+    filters:
+    - type: RequestHeaderModifier
+      requestHeaderModifier:
+        add:
+        - name: X-Admin-Request
+          value: "true"
+    backendRefs:
+    - name: admin-service
+      port: 9000
+  
+  # Default traffic
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: frontend-service
+      port: 80
+```
+
+### Traffic Splitting (Canary Deployment)
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: canary-route
+  namespace: project-myproject
+spec:
+  parentRefs:
+  - name: my-gateway
+  rules:
+  - backendRefs:
+    - name: stable-service
+      port: 8080
+      weight: 90
+    - name: canary-service
+      port: 8080
+      weight: 10
+```
+
+## kubectl Commands
+
+### Gateway Commands
+
+```bash
+# List gateways
+kubectl get gateways -n project-myproject
+
+# Get gateway details
+kubectl describe gateway my-gateway -n project-myproject
+
+# Get gateway IP address
+kubectl get gateway my-gateway -n project-myproject \
+  -o jsonpath='{.status.addresses[0].value}'
+
+# Create gateway
+kubectl apply -f gateway.yaml
+
+# Delete gateway
+kubectl delete gateway my-gateway -n project-myproject
+```
+
+### HTTPRoute Commands
+
+```bash
+# List routes
+kubectl get httproutes -n project-myproject
+
+# Get route details
+kubectl describe httproute web-route -n project-myproject
+
+# Check route status
+kubectl get httproute web-route -n project-myproject -o yaml
+
+# Create route
+kubectl apply -f httproute.yaml
+
+# Delete route
+kubectl delete httproute web-route -n project-myproject
+```
+
+### GatewayClass Commands
+
+```bash
+# List gateway classes
+kubectl get gatewayclasses
+
+# Get gateway class details
+kubectl describe gatewayclass datum-gateway
+```
+
+## Related Resources
+
+- [Workload](/api/resources/workload) - Deploy applications to expose via gateways
+- [Network](/api/resources/network) - Network infrastructure for gateway connectivity
+- [Project](/api/resources/project) - Gateways are scoped to projects
+
+## Troubleshooting
+
+<Accordion title="Gateway not getting an IP address">
+  **Check:**
+  1. View gateway status: `kubectl describe gateway <name> -n <namespace>`
+  2. Check gateway conditions for errors
+  3. Verify GatewayClass controller is running
+  4. Check cloud provider quota for load balancers
+</Accordion>
+
+<Accordion title="HTTPRoute not routing traffic">
+  **Check:**
+  1. Verify route is attached: `kubectl get httproute <name> -n <namespace> -o yaml`
+  2. Check status.parents for attachment status
+  3. Verify backend service exists and has endpoints
+  4. Test with curl using the gateway IP address
+</Accordion>
+
+<Accordion title="TLS certificate not working">
+  **Check:**
+  1. Verify the certificate secret exists: `kubectl get secret <cert-name> -n <namespace>`
+  2. Check secret has tls.crt and tls.key data
+  3. Verify hostname matches certificate CN/SAN
+  4. Check gateway listener conditions for TLS errors
+</Accordion>

@@ -1,0 +1,520 @@
+---
+title: Kubernetes Cluster Setup
+description: Requirements and setup instructions for running Datum
+---
+
+# Kubernetes Cluster Setup
+
+Datum Cloud runs on Kubernetes and requires a properly configured cluster. This guide covers cluster requirements and setup instructions for various environments.
+
+## Requirements
+
+### Minimum Requirements
+
+<CardGroup cols={2}>
+  <Card title="Kubernetes Version" icon="dharmachakra">
+    **v1.28 or later**
+    
+    Datum uses features from recent Kubernetes releases.
+  </Card>
+  
+  <Card title="Cluster Resources" icon="server">
+    **Minimum:**
+    - 2 CPU cores
+    - 4 GB RAM
+    - 20 GB disk
+    
+    **Recommended:**
+    - 4 CPU cores
+    - 8 GB RAM
+    - 50 GB disk
+  </Card>
+  
+  <Card title="Node Count" icon="diagram-project">
+    **Minimum:** 1 node
+    
+    **Recommended:** 3+ nodes for HA
+  </Card>
+  
+  <Card title="Network" icon="network-wired">
+    - Pod network (CNI plugin)
+    - LoadBalancer support (for Gateways)
+    - Network policy support (optional)
+  </Card>
+</CardGroup>
+
+### Required Features
+
+- **Custom Resource Definitions (CRDs)**: Datum extends Kubernetes with custom resources
+- **RBAC**: Role-based access control must be enabled
+- **Admission Webhooks**: For validation and mutation (optional but recommended)
+- **Persistent Storage**: For stateful workloads (optional)
+
+## Supported Environments
+
+Datum can run in various Kubernetes environments:
+
+<Tabs>
+  <Tab title="Cloud Providers">
+    ### Google Kubernetes Engine (GKE)
+    
+    ```bash
+    # Create GKE cluster
+    gcloud container clusters create datum-cluster \
+      --zone us-central1-a \
+      --machine-type n2-standard-4 \
+      --num-nodes 3 \
+      --enable-autoscaling \
+      --min-nodes 3 \
+      --max-nodes 10 \
+      --enable-network-policy \
+      --release-channel regular
+    
+    # Get credentials
+    gcloud container clusters get-credentials datum-cluster --zone us-central1-a
+    ```
+    
+    ### Amazon EKS
+    
+    ```bash
+    # Create EKS cluster using eksctl
+    eksctl create cluster \
+      --name datum-cluster \
+      --version 1.28 \
+      --region us-west-2 \
+      --nodegroup-name standard-workers \
+      --node-type t3.large \
+      --nodes 3 \
+      --nodes-min 3 \
+      --nodes-max 10 \
+      --managed
+    
+    # Update kubeconfig
+    aws eks update-kubeconfig --name datum-cluster --region us-west-2
+    ```
+    
+    ### Azure AKS
+    
+    ```bash
+    # Create resource group
+    az group create --name datum-rg --location eastus
+    
+    # Create AKS cluster
+    az aks create \
+      --resource-group datum-rg \
+      --name datum-cluster \
+      --node-count 3 \
+      --node-vm-size Standard_DS3_v2 \
+      --enable-cluster-autoscaler \
+      --min-count 3 \
+      --max-count 10 \
+      --network-plugin azure \
+      --generate-ssh-keys
+    
+    # Get credentials
+    az aks get-credentials --resource-group datum-rg --name datum-cluster
+    ```
+  </Tab>
+  
+  <Tab title="Local Development">
+    ### Kind (Kubernetes in Docker)
+    
+    **Best for:** Local development and testing
+    
+    <Steps>
+      <Step title="Install Kind">
+        ```bash
+        # macOS
+        brew install kind
+        
+        # Linux
+        curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+        chmod +x ./kind
+        sudo mv ./kind /usr/local/bin/kind
+        ```
+      </Step>
+      
+      <Step title="Create cluster config">
+        ```yaml kind-config.yaml
+        kind: Cluster
+        apiVersion: kind.x-k8s.io/v1alpha4
+        nodes:
+          - role: control-plane
+            kubeadmConfigPatches:
+              - |
+                kind: InitConfiguration
+                nodeRegistration:
+                  kubeletExtraArgs:
+                    node-labels: "ingress-ready=true"
+            extraPortMappings:
+              - containerPort: 80
+                hostPort: 80
+                protocol: TCP
+              - containerPort: 443
+                hostPort: 443
+                protocol: TCP
+          - role: worker
+          - role: worker
+        ```
+      </Step>
+      
+      <Step title="Create cluster">
+        ```bash
+        kind create cluster --name datum --config kind-config.yaml
+        ```
+      </Step>
+      
+      <Step title="Verify cluster">
+        ```bash
+        kubectl cluster-info --context kind-datum
+        ```
+      </Step>
+    </Steps>
+    
+    ### Minikube
+    
+    ```bash
+    # Start Minikube with adequate resources
+    minikube start \
+      --cpus 4 \
+      --memory 8192 \
+      --disk-size 50g \
+      --kubernetes-version v1.28.0
+    
+    # Enable addons
+    minikube addons enable ingress
+    minikube addons enable metrics-server
+    ```
+    
+    ### k3s (Lightweight Kubernetes)
+    
+    ```bash
+    # Install k3s
+    curl -sfL https://get.k3s.io | sh -
+    
+    # Copy kubeconfig
+    mkdir -p ~/.kube
+    sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+    sudo chown $USER ~/.kube/config
+    
+    # Verify
+    kubectl get nodes
+    ```
+  </Tab>
+  
+  <Tab title="On-Premises">
+    ### Using kubeadm
+    
+    <Steps>
+      <Step title="Install container runtime">
+        ```bash
+        # Install containerd
+        sudo apt-get update
+        sudo apt-get install -y containerd
+        sudo systemctl enable containerd
+        sudo systemctl start containerd
+        ```
+      </Step>
+      
+      <Step title="Install kubeadm, kubelet, kubectl">
+        ```bash
+        sudo apt-get update
+        sudo apt-get install -y apt-transport-https ca-certificates curl
+        
+        curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.28/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        
+        echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.28/deb/ /' | sudo tee /etc/apt/sources.list.d/kubernetes.list
+        
+        sudo apt-get update
+        sudo apt-get install -y kubelet kubeadm kubectl
+        sudo apt-mark hold kubelet kubeadm kubectl
+        ```
+      </Step>
+      
+      <Step title="Initialize control plane">
+        ```bash
+        sudo kubeadm init --pod-network-cidr=10.244.0.0/16
+        
+        # Setup kubeconfig
+        mkdir -p $HOME/.kube
+        sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+        sudo chown $(id -u):$(id -g) $HOME/.kube/config
+        ```
+      </Step>
+      
+      <Step title="Install CNI plugin">
+        ```bash
+        # Install Calico
+        kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+        
+        # Or install Flannel
+        kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+        ```
+      </Step>
+      
+      <Step title="Join worker nodes (optional)">
+        Run the join command from kubeadm init output on worker nodes:
+        ```bash
+        sudo kubeadm join <control-plane-ip>:6443 --token <token> --discovery-token-ca-cert-hash sha256:<hash>
+        ```
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+## Cluster Verification
+
+Verify your cluster is ready for Datum:
+
+### Check Cluster Info
+
+```bash
+kubectl cluster-info
+```
+
+**Expected output:**
+
+```
+Kubernetes control plane is running at https://...
+CoreDNS is running at https://.../api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
+```
+
+### Check Node Status
+
+```bash
+kubectl get nodes
+```
+
+**All nodes should be Ready:**
+
+```
+NAME         STATUS   ROLES           AGE   VERSION
+node-1       Ready    control-plane   10m   v1.28.0
+node-2       Ready    <none>          9m    v1.28.0
+node-3       Ready    <none>          9m    v1.28.0
+```
+
+### Check System Pods
+
+```bash
+kubectl get pods -n kube-system
+```
+
+**All pods should be Running:**
+
+```
+NAME                              READY   STATUS    RESTARTS   AGE
+coredns-...                       1/1     Running   0          10m
+etcd-...                          1/1     Running   0          10m
+kube-apiserver-...                1/1     Running   0          10m
+kube-controller-manager-...       1/1     Running   0          10m
+kube-proxy-...                    1/1     Running   0          10m
+kube-scheduler-...                1/1     Running   0          10m
+```
+
+### Verify RBAC
+
+```bash
+kubectl auth can-i create deployments --all-namespaces
+kubectl auth can-i create customresourcedefinitions
+```
+
+Both should return `yes`.
+
+### Check API Server Version
+
+```bash
+kubectl version --short
+```
+
+Ensure server version is v1.28 or later.
+
+## Post-Installation Configuration
+
+### Install LoadBalancer (if not available)
+
+For local clusters without native LoadBalancer support:
+
+```bash
+# Install MetalLB
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.13.0/config/manifests/metallb-native.yaml
+
+# Configure IP address pool
+cat <<EOF | kubectl apply -f -
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: default
+  namespace: metallb-system
+spec:
+  addresses:
+    - 192.168.1.240-192.168.1.250
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: default
+  namespace: metallb-system
+EOF
+```
+
+### Install Metrics Server (optional)
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+```
+
+### Enable Network Policies (optional)
+
+Network policies provide additional security. If your CNI supports them:
+
+```bash
+# Verify support
+kubectl get networkpolicies -A
+
+# No error means network policies are supported
+```
+
+## Resource Limits
+
+Configure resource limits for the cluster:
+
+### Controller Manager Resources
+
+From `config/manager/manager.yaml:130`:
+
+```yaml
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+```
+
+Adjust based on workload:
+
+```bash
+kubectl edit deployment datum-controller-manager -n datum-system
+```
+
+## High Availability Setup
+
+For production deployments, configure HA:
+
+### Multiple Control Plane Nodes
+
+```bash
+# GKE (automatic)
+gcloud container clusters create datum-cluster \
+  --num-nodes 3 \
+  --enable-autoscaling
+
+# EKS (automatic with managed node groups)
+eksctl create cluster --name datum-cluster --nodes 3
+
+# kubeadm (manual)
+# Use --control-plane-endpoint and join additional control plane nodes
+```
+
+### etcd Backup
+
+```bash
+# Snapshot etcd
+ETCDCTL_API=3 etcdctl snapshot save snapshot.db \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key
+```
+
+### Multiple Controller Replicas
+
+Datum uses leader election (configured in `config/manager/manager.yaml:76`), so you can safely run multiple replicas:
+
+```bash
+kubectl scale deployment datum-controller-manager --replicas=3 -n datum-system
+```
+
+## Security Hardening
+
+### Pod Security Standards
+
+From `config/manager/manager.yaml:43`:
+
+```yaml
+securityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+```
+
+### Network Policies
+
+```bash
+# Apply network policies
+kubectl apply -k config/network-policy
+```
+
+### RBAC
+
+Datum follows least-privilege RBAC:
+
+```bash
+# Review RBAC
+kubectl get clusterroles | grep datum
+kubectl describe clusterrole datum-manager-role
+```
+
+## Troubleshooting
+
+### Nodes not Ready
+
+```bash
+# Check node status
+kubectl describe node <node-name>
+
+# Check kubelet logs
+sudo journalctl -u kubelet -n 100
+
+# Check CNI plugin
+kubectl get pods -n kube-system -l k8s-app=calico-node
+```
+
+### DNS not working
+
+```bash
+# Check CoreDNS
+kubectl get pods -n kube-system -l k8s-app=kube-dns
+
+# Test DNS
+kubectl run -it --rm debug --image=busybox --restart=Never -- nslookup kubernetes.default
+```
+
+### Insufficient resources
+
+```bash
+# Check node resources
+kubectl describe nodes
+
+# Check pod resource requests
+kubectl get pods -A -o custom-columns=NAME:.metadata.name,CPU_REQ:.spec.containers[*].resources.requests.cpu,MEM_REQ:.spec.containers[*].resources.requests.memory
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/deployment/installation">
+    Install Datum components
+  </Card>
+  <Card title="Configuration" icon="gear" href="/deployment/configuration">
+    Configure Datum for your environment
+  </Card>
+  <Card title="Security" icon="shield" href="/operations/security">
+    Security best practices
+  </Card>
+  <Card title="Monitoring" icon="chart-line" href="/operations/monitoring">
+    Set up monitoring and observability
+  </Card>
+</CardGroup>

@@ -1,0 +1,636 @@
+---
+title: "Kubernetes Gateway API Integration"
+description: "Manage traffic routing and ingress with the standard Kubernetes Gateway API"
+---
+
+## Overview
+
+Datum integrates with the [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) to provide advanced traffic management, routing, and ingress capabilities. This allows you to define how external and internal traffic connects to your services using standard, portable Kubernetes resources.
+
+<Info>
+The Gateway API is a Kubernetes SIG project that provides a more expressive, extensible, and role-oriented API for traffic management compared to the traditional Ingress resource.
+</Info>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Standard API" icon="book">
+    Use the official Kubernetes Gateway API resources (GatewayClass, Gateway, HTTPRoute)
+  </Card>
+  <Card title="TLS Management" icon="lock">
+    Configure TLS certificates and termination for secure connections
+  </Card>
+  <Card title="Advanced Routing" icon="route">
+    Path-based, header-based, and weighted routing logic
+  </Card>
+  <Card title="Multi-Network Support" icon="network-wired">
+    Integrate with Datum's network services for cross-VPC routing
+  </Card>
+</CardGroup>
+
+## Gateway API Resources
+
+The Gateway API defines several key resources:
+
+### GatewayClass
+
+Defines a class of gateways managed by a specific controller:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: datum-gateway
+spec:
+  controllerName: datum.net/gateway-controller
+  description: "Datum-managed gateway class"
+```
+
+### Gateway
+
+Defines load balancer configuration and listeners:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: production-gateway
+  namespace: my-project
+spec:
+  gatewayClassName: datum-gateway
+  
+  listeners:
+    # HTTPS listener
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "*.example.com"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: example-com-tls
+            kind: Secret
+    
+    # HTTP listener (redirect to HTTPS)
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: "*.example.com"
+```
+
+### HTTPRoute
+
+Defines routing rules for HTTP(S) traffic:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api-route
+  namespace: my-project
+spec:
+  parentRefs:
+    - name: production-gateway
+  
+  hostnames:
+    - "api.example.com"
+  
+  rules:
+    # Route /v1/* to v1 service
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v1/
+      backendRefs:
+        - name: api-v1
+          port: 8080
+    
+    # Route /v2/* to v2 service
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /v2/
+      backendRefs:
+        - name: api-v2
+          port: 8080
+```
+
+## Getting Started
+
+<Steps>
+  <Step title="Install Gateway API CRDs">
+    The Gateway API custom resources need to be installed in your cluster:
+
+    ```bash
+    # Install standard Gateway API CRDs
+    kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.0.0/standard-install.yaml
+    ```
+
+    <Note>
+    If you're using Datum Cloud, the Gateway API CRDs are pre-installed.
+    </Note>
+  </Step>
+
+  <Step title="Create a Gateway">
+    Define a gateway to handle incoming traffic:
+
+    ```yaml
+    apiVersion: gateway.networking.k8s.io/v1
+    kind: Gateway
+    metadata:
+      name: my-gateway
+      namespace: my-project
+    spec:
+      gatewayClassName: datum-gateway
+      listeners:
+        - name: http
+          protocol: HTTP
+          port: 80
+    ```
+
+    Apply the gateway:
+
+    ```bash
+    kubectl apply -f gateway.yaml
+    ```
+  </Step>
+
+  <Step title="Create an HTTPRoute">
+    Define routing rules to direct traffic to your services:
+
+    ```yaml
+    apiVersion: gateway.networking.k8s.io/v1
+    kind: HTTPRoute
+    metadata:
+      name: web-route
+      namespace: my-project
+    spec:
+      parentRefs:
+        - name: my-gateway
+      rules:
+        - backendRefs:
+            - name: web-service
+              port: 80
+    ```
+
+    Apply the route:
+
+    ```bash
+    kubectl apply -f httproute.yaml
+    ```
+  </Step>
+
+  <Step title="Verify gateway status">
+    Check that the gateway is ready:
+
+    ```bash
+    kubectl get gateway my-gateway -n my-project
+    kubectl describe gateway my-gateway -n my-project
+    ```
+
+    Look for the assigned IP address or hostname in the status.
+  </Step>
+</Steps>
+
+## TLS Configuration
+
+Configure HTTPS with TLS certificate management:
+
+### Create TLS Secret
+
+Store your TLS certificate and key:
+
+```bash
+kubectl create secret tls example-com-tls \
+  --cert=path/to/cert.pem \
+  --key=path/to/key.pem \
+  -n my-project
+```
+
+### Configure TLS Termination
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: secure-gateway
+  namespace: my-project
+spec:
+  gatewayClassName: datum-gateway
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "example.com"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: example-com-tls
+            kind: Secret
+```
+
+### HTTP to HTTPS Redirect
+
+Redirect HTTP traffic to HTTPS:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: http-redirect
+  namespace: my-project
+spec:
+  parentRefs:
+    - name: secure-gateway
+      sectionName: http
+  
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+```
+
+## Advanced Routing
+
+### Path-Based Routing
+
+Route based on URL paths:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: app-routes
+  namespace: my-project
+spec:
+  parentRefs:
+    - name: my-gateway
+  
+  hostnames:
+    - "app.example.com"
+  
+  rules:
+    # API routes
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/
+      backendRefs:
+        - name: api-service
+          port: 8080
+    
+    # Admin routes
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /admin/
+      backendRefs:
+        - name: admin-service
+          port: 3000
+    
+    # Default route (static assets)
+    - backendRefs:
+        - name: frontend-service
+          port: 80
+```
+
+### Header-Based Routing
+
+Route based on HTTP headers:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: header-based-routing
+  namespace: my-project
+spec:
+  parentRefs:
+    - name: my-gateway
+  
+  rules:
+    # Route requests with "X-Beta: true" header to beta backend
+    - matches:
+        - headers:
+            - type: Exact
+              name: X-Beta
+              value: "true"
+      backendRefs:
+        - name: beta-service
+          port: 8080
+    
+    # Default backend
+    - backendRefs:
+        - name: stable-service
+          port: 8080
+```
+
+### Weighted Traffic Splitting
+
+Distribute traffic across multiple backends:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: canary-deployment
+  namespace: my-project
+spec:
+  parentRefs:
+    - name: my-gateway
+  
+  rules:
+    - backendRefs:
+        # 90% traffic to stable version
+        - name: app-v1
+          port: 8080
+          weight: 90
+        
+        # 10% traffic to canary version
+        - name: app-v2
+          port: 8080
+          weight: 10
+```
+
+### Request Header Manipulation
+
+Add, modify, or remove headers:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: header-manipulation
+  namespace: my-project
+spec:
+  parentRefs:
+    - name: my-gateway
+  
+  rules:
+    - filters:
+        # Add custom headers
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            add:
+              - name: X-Custom-Header
+                value: "added-by-gateway"
+            set:
+              - name: X-Environment
+                value: "production"
+            remove:
+              - X-Internal-Header
+      
+      backendRefs:
+        - name: api-service
+          port: 8080
+```
+
+## Integration with Datum Workloads
+
+Connect Gateway API to Datum workload instances:
+
+```yaml
+# Deploy a workload
+apiVersion: workload.datum.net/v1alpha1
+kind: Workload
+metadata:
+  name: web-app
+  namespace: my-project
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: gcr.io/my-project/web-app:v1.0
+          ports:
+            - containerPort: 8080
+              name: http
+  replicas: 3
+
+---
+# Create a Kubernetes Service pointing to workload instances
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-app-service
+  namespace: my-project
+spec:
+  selector:
+    workload: web-app
+  ports:
+    - port: 80
+      targetPort: 8080
+
+---
+# Route traffic to the service via Gateway
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: web-app-route
+  namespace: my-project
+spec:
+  parentRefs:
+    - name: production-gateway
+  hostnames:
+    - "app.example.com"
+  rules:
+    - backendRefs:
+        - name: web-app-service
+          port: 80
+```
+
+## DNS Integration
+
+Combine Gateway API with Datum's DNS service:
+
+<Steps>
+  <Step title="Get Gateway IP address">
+    ```bash
+    kubectl get gateway my-gateway -n my-project -o jsonpath='{.status.addresses[0].value}'
+    ```
+  </Step>
+
+  <Step title="Create DNS record">
+    ```yaml
+    apiVersion: dns.networking.miloapis.com/v1alpha1
+    kind: DNSRecordSet
+    metadata:
+      name: app-example-com
+      namespace: my-project
+    spec:
+      zoneRef:
+        name: example-com
+      name: app.example.com.
+      type: A
+      ttl: 300
+      rrdatas:
+        - "203.0.113.50"  # Gateway IP
+    ```
+  </Step>
+
+  <Step title="Configure HTTPRoute hostname">
+    ```yaml
+    apiVersion: gateway.networking.k8s.io/v1
+    kind: HTTPRoute
+    metadata:
+      name: app-route
+      namespace: my-project
+    spec:
+      parentRefs:
+        - name: my-gateway
+      hostnames:
+        - "app.example.com"
+      rules:
+        - backendRefs:
+            - name: app-service
+              port: 80
+    ```
+  </Step>
+</Steps>
+
+## Monitoring and Observability
+
+Check gateway and route status:
+
+```bash
+# View all gateways
+kubectl get gateway -A
+
+# Get detailed gateway status
+kubectl describe gateway my-gateway -n my-project
+
+# View HTTP routes
+kubectl get httproute -n my-project
+
+# Check route status
+kubectl describe httproute web-route -n my-project
+```
+
+Gateway status includes:
+- Listener status and readiness
+- Assigned IP addresses or hostnames
+- TLS certificate status
+- Attached route references
+
+HTTPRoute status includes:
+- Parent gateway references
+- Route acceptance status
+- Backend service health
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Gateway not getting an IP address">
+    Check the gateway controller logs:
+
+    ```bash
+    kubectl logs -n datum-system -l app=gateway-controller
+    ```
+
+    Common issues:
+    - GatewayClass controller not installed or not running
+    - Invalid listener configuration
+    - Infrastructure provider issues (check workload operator logs)
+  </Accordion>
+
+  <Accordion title="HTTPRoute not routing traffic">
+    Verify the route is attached to the gateway:
+
+    ```bash
+    kubectl describe httproute <route-name> -n <namespace>
+    ```
+
+    Check for:
+    - Route acceptance status in conditions
+    - Backend service exists and has endpoints
+    - Hostname matches gateway listener hostname
+    - Path matching rules are correct
+  </Accordion>
+
+  <Accordion title="TLS certificate errors">
+    Verify the TLS secret exists and is valid:
+
+    ```bash
+    kubectl get secret <tls-secret-name> -n <namespace>
+    kubectl describe secret <tls-secret-name> -n <namespace>
+    ```
+
+    Ensure:
+    - Secret is type `kubernetes.io/tls`
+    - Certificate matches the gateway hostname
+    - Certificate is not expired
+  </Accordion>
+
+  <Accordion title="503 Service Unavailable errors">
+    Check backend service and endpoints:
+
+    ```bash
+    kubectl get service <backend-service> -n <namespace>
+    kubectl get endpoints <backend-service> -n <namespace>
+    ```
+
+    Verify:
+    - Backend service exists and has selectors matching workload pods
+    - Workload instances are running and healthy
+    - Service port matches HTTPRoute backendRef port
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use namespaced gateways">
+    - Create gateways within project namespaces for isolation
+    - Use ReferenceGrant for cross-namespace routing if needed
+    - Limit gateway permissions using RBAC
+  </Accordion>
+
+  <Accordion title="Organize routes logically">
+    - Create separate HTTPRoutes for different applications
+    - Use meaningful route names that describe their purpose
+    - Group related routes using labels
+  </Accordion>
+
+  <Accordion title="Implement progressive rollouts">
+    - Use weighted traffic splitting for canary deployments
+    - Gradually shift traffic from old to new versions
+    - Monitor metrics before increasing traffic weights
+  </Accordion>
+
+  <Accordion title="Secure with TLS">
+    - Always use HTTPS for production traffic
+    - Automate certificate renewal
+    - Redirect HTTP to HTTPS
+    - Use strong TLS configurations
+  </Accordion>
+</AccordionGroup>
+
+## Reference Documentation
+
+<CardGroup cols={2}>
+  <Card title="Gateway API Docs" icon="book" href="https://gateway-api.sigs.k8s.io/">
+    Official Kubernetes Gateway API documentation
+  </Card>
+  <Card title="Gateway API GitHub" icon="github" href="https://github.com/kubernetes-sigs/gateway-api">
+    Source code and examples
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="DNS Service" icon="globe" href="/integrations/dns">
+    Integrate DNS records with your gateways
+  </Card>
+  <Card title="Workloads" icon="box" href="/concepts/workloads">
+    Deploy backend services for your routes
+  </Card>
+  <Card title="Networks" icon="network-wired" href="/concepts/networks">
+    Configure network connectivity for gateways
+  </Card>
+  <Card title="Security" icon="shield" href="/operations/security">
+    Learn about securing your gateway configuration
+  </Card>
+</CardGroup>

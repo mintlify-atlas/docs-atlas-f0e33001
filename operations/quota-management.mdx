@@ -1,0 +1,584 @@
+---
+title: Quota Management
+description: Understanding and managing resource quotas in Datum Cloud
+---
+
+# Quota Management
+
+Datum Cloud uses a sophisticated quota system to enforce resource limits at the organization and project levels. This guide explains how quotas work and how to manage them.
+
+## Quota System Overview
+
+The quota system consists of four main components:
+
+<CardGroup cols={2}>
+  <Card title="ResourceRegistration" icon="clipboard-list">
+    Defines **what** can be limited (e.g., projects, workloads)
+  </Card>
+  
+  <Card title="GrantCreationPolicy" icon="gift">
+    Defines **how much** quota to allocate automatically
+  </Card>
+  
+  <Card title="ClaimCreationPolicy" icon="hand">
+    Defines **when** quota is claimed (e.g., on resource creation)
+  </Card>
+  
+  <Card title="ResourceGrant / ResourceClaim" icon="scale-balanced">
+    Actual quota **allocations** and **consumption**
+  </Card>
+</CardGroup>
+
+## How Quotas Work
+
+### Example: Project Quota
+
+<Steps>
+  <Step title="Registration">
+    A `ResourceRegistration` defines that projects can be quota-limited.
+    
+    From `config/services/resourcemanager.miloapis.com/quota/registrations/project-registration.yaml:1`:
+    ```yaml
+    apiVersion: quota.miloapis.com/v1alpha1
+    kind: ResourceRegistration
+    metadata:
+      name: projects-per-organization
+    spec:
+      consumerType:
+        apiGroup: resourcemanager.miloapis.com
+        kind: Organization
+      type: Entity
+      resourceType: resourcemanager.miloapis.com/projects
+      baseUnit: project
+      displayUnit: projects
+      claimingResources:
+        - apiGroup: resourcemanager.miloapis.com
+          kind: Project
+    ```
+  </Step>
+  
+  <Step title="Grant Policy">
+    A `GrantCreationPolicy` automatically allocates quota when an organization is created.
+    
+    For Personal organizations (`quota/grant-policies/personal-org-grant-policy.yaml:1`):
+    ```yaml
+    spec:
+      trigger:
+        resource:
+          apiVersion: resourcemanager.miloapis.com/v1alpha1
+          kind: Organization
+        constraints:
+          - expression: 'trigger.spec.type == "Personal"'
+      target:
+        resourceGrantTemplate:
+          spec:
+            allowances:
+              - resourceType: resourcemanager.miloapis.com/projects
+                buckets:
+                  - amount: 2  # Personal orgs get 2 projects
+    ```
+    
+    For Standard organizations (`quota/grant-policies/standard-org-grant-policy.yaml:1`):
+    ```yaml
+    spec:
+      allowances:
+        - resourceType: resourcemanager.miloapis.com/projects
+          buckets:
+            - amount: 10  # Standard orgs get 10 projects
+    ```
+  </Step>
+  
+  <Step title="Claim Policy">
+    A `ClaimCreationPolicy` creates a quota claim when a project is created.
+    
+    From `quota/claim-policies/claim-creation-policy.yaml:1`:
+    ```yaml
+    spec:
+      trigger:
+        resource:
+          apiVersion: resourcemanager.miloapis.com/v1alpha1
+          kind: Project
+      target:
+        resourceClaimTemplate:
+          spec:
+            requests:
+              - resourceType: resourcemanager.miloapis.com/projects
+                amount: 1  # Each project claims 1 quota unit
+    ```
+  </Step>
+  
+  <Step title="Enforcement">
+    When you create a project:
+    1. ClaimCreationPolicy triggers and creates a ResourceClaim
+    2. Quota system checks if organization has available quota
+    3. If quota available: Project created, claim satisfied
+    4. If quota exceeded: Creation fails with error
+  </Step>
+</Steps>
+
+## Viewing Quotas
+
+### Organization Quotas
+
+```bash
+# View quota grants for an organization
+kubectl get resourcegrants -n organization-my-company
+```
+
+**Example output:**
+
+```
+NAME                     CONSUMER     RESOURCE-TYPE                            ALLOCATED   AVAILABLE
+default-project-quota    my-company   resourcemanager.miloapis.com/projects    7           3
+```
+
+### Detailed Quota Information
+
+```bash
+# Describe grant
+kubectl describe resourcegrant default-project-quota -n organization-my-company
+```
+
+**Example output:**
+
+```yaml
+Name:         default-project-quota
+Namespace:    organization-my-company
+Spec:
+  Consumer Ref:
+    API Group:  resourcemanager.miloapis.com
+    Kind:       Organization
+    Name:       my-company
+  Allowances:
+    Resource Type:  resourcemanager.miloapis.com/projects
+    Buckets:
+      Amount:  10
+Status:
+  Allocated:  7   # 7 projects created
+  Available:  3   # 3 more can be created
+  Phase:      Active
+```
+
+### View Quota Claims
+
+```bash
+# List all claims in organization
+kubectl get resourceclaims -n organization-my-company
+```
+
+**Example output:**
+
+```
+NAME                          CONSUMER     REQUESTED   STATUS
+project-production-env        my-company   1           Satisfied
+project-staging-env           my-company   1           Satisfied
+project-development           my-company   1           Satisfied
+```
+
+### Check Specific Claim
+
+```bash
+kubectl describe resourceclaim project-production-env -n organization-my-company
+```
+
+## Default Quotas
+
+Datum Cloud has the following default quotas:
+
+### Organization Quotas
+
+<Tabs>
+  <Tab title="Personal Organization">
+    **Projects:** 2
+    
+    ```yaml
+    resourceType: resourcemanager.miloapis.com/projects
+    amount: 2
+    ```
+    
+    Defined in `config/services/resourcemanager.miloapis.com/quota/grant-policies/personal-org-grant-policy.yaml:32`
+  </Tab>
+  
+  <Tab title="Standard Organization">
+    **Projects:** 10
+    
+    ```yaml
+    resourceType: resourcemanager.miloapis.com/projects
+    amount: 10
+    ```
+    
+    Defined in `config/services/resourcemanager.miloapis.com/quota/grant-policies/standard-org-grant-policy.yaml:32`
+  </Tab>
+</Tabs>
+
+## Customizing Quotas
+
+### Modify Organization Project Quota
+
+<Steps>
+  <Step title="Edit the GrantCreationPolicy">
+    ```bash
+    # For Personal organizations
+    kubectl edit grantcreationpolicy personal-organization-project-quota-policy
+    
+    # For Standard organizations
+    kubectl edit grantcreationpolicy standard-organization-project-quota-policy
+    ```
+  </Step>
+  
+  <Step title="Change the amount">
+    ```yaml
+    spec:
+      target:
+        resourceGrantTemplate:
+          spec:
+            allowances:
+              - resourceType: resourcemanager.miloapis.com/projects
+                buckets:
+                  - amount: 20  # Changed from 10 to 20
+    ```
+  </Step>
+  
+  <Step title="Apply to existing organizations">
+    The policy only affects new organizations. For existing orgs, manually update grants:
+    
+    ```bash
+    kubectl edit resourcegrant default-project-quota -n organization-my-company
+    ```
+    
+    Change amount:
+    ```yaml
+    spec:
+      allowances:
+        - resourceType: resourcemanager.miloapis.com/projects
+          buckets:
+            - amount: 20
+    ```
+  </Step>
+</Steps>
+
+### Manually Grant Additional Quota
+
+Grant extra quota to a specific organization:
+
+```yaml
+apiVersion: quota.miloapis.com/v1alpha1
+kind: ResourceGrant
+metadata:
+  name: extra-project-quota
+  namespace: organization-my-company
+spec:
+  consumerRef:
+    apiGroup: resourcemanager.miloapis.com
+    kind: Organization
+    name: my-company
+  allowances:
+    - resourceType: resourcemanager.miloapis.com/projects
+      buckets:
+        - amount: 5  # 5 additional projects
+```
+
+```bash
+kubectl apply -f extra-quota.yaml
+```
+
+<Info>
+Multiple grants for the same resource type are additive. The organization now has 10 (default) + 5 (extra) = 15 total project quota.
+</Info>
+
+## Creating New Quota Types
+
+To add quota limits for other resources (e.g., workloads, networks):
+
+### 1. Create ResourceRegistration
+
+```yaml
+apiVersion: quota.miloapis.com/v1alpha1
+kind: ResourceRegistration
+metadata:
+  name: workloads-per-project
+  labels:
+    app.kubernetes.io/name: datum
+    app.kubernetes.io/component: quota-system
+spec:
+  # Who consumes this quota
+  consumerType:
+    apiGroup: resourcemanager.miloapis.com
+    kind: Project
+  
+  # Counting quota (not size-based)
+  type: Entity
+  
+  # What resource is being limited
+  resourceType: compute.datumapis.com/workloads
+  
+  description: "Maximum number of workloads per project"
+  
+  # Units
+  baseUnit: workload
+  displayUnit: workloads
+  unitConversionFactor: 1
+  
+  # What resources claim this quota
+  claimingResources:
+    - apiGroup: compute.datumapis.com
+      kind: Workload
+```
+
+### 2. Create GrantCreationPolicy
+
+```yaml
+apiVersion: quota.miloapis.com/v1alpha1
+kind: GrantCreationPolicy
+metadata:
+  name: project-workload-quota-policy
+  labels:
+    app.kubernetes.io/name: datum
+    app.kubernetes.io/component: quota-system
+spec:
+  # Trigger when a project is created
+  trigger:
+    resource:
+      apiVersion: resourcemanager.miloapis.com/v1alpha1
+      kind: Project
+  
+  # Create a grant
+  target:
+    resourceGrantTemplate:
+      metadata:
+        name: "workload-quota"
+        namespace: "project-{{ trigger.metadata.name }}"
+        labels:
+          quota.miloapis.com/auto-created: "true"
+      spec:
+        consumerRef:
+          apiGroup: resourcemanager.miloapis.com
+          kind: Project
+          name: "{{ trigger.metadata.name }}"
+        allowances:
+          - resourceType: compute.datumapis.com/workloads
+            buckets:
+              - amount: 50  # 50 workloads per project
+```
+
+### 3. Create ClaimCreationPolicy
+
+```yaml
+apiVersion: quota.miloapis.com/v1alpha1
+kind: ClaimCreationPolicy
+metadata:
+  name: workload-quota-enforcement
+  labels:
+    app.kubernetes.io/name: datum
+    app.kubernetes.io/component: quota-system
+spec:
+  # Trigger when a workload is created
+  trigger:
+    resource:
+      apiVersion: compute.datumapis.com/v1alpha1
+      kind: Workload
+  
+  # Create a claim
+  target:
+    resourceClaimTemplate:
+      metadata:
+        name: "workload-{{ trigger.metadata.name }}"
+        namespace: "project-{{ trigger.metadata.namespace }}"
+        labels:
+          quota.miloapis.com/auto-created: "true"
+      spec:
+        consumerRef:
+          apiGroup: resourcemanager.miloapis.com
+          kind: Project
+          name: "{{ trigger.metadata.namespace }}"
+        requests:
+          - resourceType: compute.datumapis.com/workloads
+            amount: 1  # Each workload claims 1 unit
+```
+
+### 4. Apply Quota Resources
+
+```bash
+kubectl apply -f workload-quota-registration.yaml
+kubectl apply -f workload-quota-grant-policy.yaml
+kubectl apply -f workload-quota-claim-policy.yaml
+```
+
+## Handling Quota Errors
+
+### Quota Exceeded Error
+
+When you exceed quota:
+
+```
+Error from server: admission webhook denied the request: 
+Quota exceeded for resourcemanager.miloapis.com/projects in organization my-company. 
+Requested: 1, Available: 0
+```
+
+**Solutions:**
+
+<Tabs>
+  <Tab title="Delete Unused Resources">
+    ```bash
+    # List existing projects
+    kubectl get projects -l organization=my-company
+    
+    # Delete unused project
+    kubectl delete project old-project
+    
+    # Try again
+    kubectl apply -f new-project.yaml
+    ```
+  </Tab>
+  
+  <Tab title="Request More Quota">
+    Contact organization owner to:
+    1. Upgrade organization type (Personal → Standard)
+    2. Request additional quota grant
+    3. Modify grant policies
+  </Tab>
+  
+  <Tab title="Manual Grant">
+    If you're an admin, create additional grant:
+    
+    ```yaml
+    apiVersion: quota.miloapis.com/v1alpha1
+    kind: ResourceGrant
+    metadata:
+      name: extra-quota
+      namespace: organization-my-company
+    spec:
+      consumerRef:
+        apiGroup: resourcemanager.miloapis.com
+        kind: Organization
+        name: my-company
+      allowances:
+        - resourceType: resourcemanager.miloapis.com/projects
+          buckets:
+            - amount: 5
+    ```
+  </Tab>
+</Tabs>
+
+## Monitoring Quota Usage
+
+### Check Current Usage
+
+```bash
+# Script to show quota usage
+for org in $(kubectl get organizations -o name); do
+  echo "=== $org ==="
+  orgname=$(echo $org | cut -d'/' -f2)
+  kubectl get resourcegrants -n organization-$orgname -o custom-columns=\
+    NAME:.metadata.name,\
+    TYPE:.spec.allowances[0].resourceType,\
+    ALLOCATED:.status.allocated,\
+    AVAILABLE:.status.available
+done
+```
+
+### Set Up Alerts
+
+Use Prometheus to alert on high quota usage:
+
+```yaml
+# Prometheus alert rule
+groups:
+  - name: datum_quotas
+    rules:
+      - alert: QuotaNearlyExhausted
+        expr: |
+          (
+            quota_allocated / (quota_allocated + quota_available)
+          ) > 0.9
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Quota nearly exhausted for {{ $labels.organization }}"
+          description: "{{ $labels.organization }} has used {{ $value | humanizePercentage }} of quota."
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Monitor quota usage" icon="chart-line">
+    Regularly check quota usage to avoid hitting limits.
+  </Card>
+  
+  <Card title="Clean up unused resources" icon="trash">
+    Delete old projects, workloads to free quota.
+  </Card>
+  
+  <Card title="Plan capacity" icon="calendar">
+    Estimate quota needs before starting new projects.
+  </Card>
+  
+  <Card title="Use labels" icon="tags">
+    Label resources to identify quota consumers.
+  </Card>
+  
+  <Card title="Set up alerts" icon="bell">
+    Alert when quota usage reaches 80-90%.
+  </Card>
+  
+  <Card title="Document limits" icon="file-lines">
+    Document quota limits for your team.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Quota not enforced
+
+```bash
+# Check if ClaimCreationPolicy exists
+kubectl get claimcreationpolicies
+
+# Check if ResourceRegistration exists
+kubectl get resourceregistrations
+
+# Check controller logs
+kubectl logs -n datum-system -l control-plane=controller-manager | grep quota
+```
+
+### Grant not created automatically
+
+```bash
+# Check GrantCreationPolicy
+kubectl describe grantcreationpolicy personal-organization-project-quota-policy
+
+# Manually create grant
+kubectl apply -f grant.yaml
+```
+
+### Claim not created on resource creation
+
+```bash
+# Check if ClaimCreationPolicy is active
+kubectl get claimcreationpolicies
+
+# Check events
+kubectl get events -n organization-my-company --sort-by='.lastTimestamp'
+
+# Manually create claim
+kubectl apply -f claim.yaml
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Monitoring" icon="chart-line" href="/operations/monitoring">
+    Set up Prometheus monitoring for quotas
+  </Card>
+  <Card title="Managing Resources" icon="terminal" href="/operations/managing-resources">
+    Resource management workflows
+  </Card>
+  <Card title="Organizations" icon="building" href="/concepts/organizations">
+    Learn more about organizations
+  </Card>
+  <Card title="Projects" icon="folder" href="/concepts/projects">
+    Learn more about projects
+  </Card>
+</CardGroup>

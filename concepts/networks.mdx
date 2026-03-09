@@ -1,0 +1,487 @@
+---
+title: Networks
+description: VPC networks, subnets, IPAM, and network policies in Datum Cloud
+---
+
+# Networks
+
+Datum Cloud provides comprehensive networking capabilities through the Network Services Operator. Networks in Datum are similar to VPC networks in cloud providers but are provider-agnostic and declaratively managed.
+
+## Network Resources
+
+### Network
+
+The `Network` resource represents an isolated virtual network with its own IP address space.
+
+**Basic Example:**
+
+```yaml
+apiVersion: networking.datumapis.com/v1alpha1
+kind: Network
+metadata:
+  name: production-network
+  annotations:
+    kubernetes.io/description: "Production environment network"
+spec:
+  # Define IPv4 CIDR blocks for this network
+  ipv4Blocks:
+    - 10.0.0.0/16
+  
+  # Optional: IPv6 support
+  ipv6Blocks:
+    - fd00:db8::/64
+```
+
+**Key Features:**
+- Isolated network namespace
+- Custom IP address ranges (IPv4/IPv6)
+- Automatic IPAM (IP Address Management)
+- Multi-cloud support through plugins
+
+### NetworkContext
+
+`NetworkContext` provides additional configuration for how networks are implemented across different providers.
+
+```yaml
+apiVersion: networking.datumapis.com/v1alpha1
+kind: NetworkContext
+metadata:
+  name: prod-context
+spec:
+  networkRef:
+    name: production-network
+  
+  # Provider-specific configuration
+  providerConfig:
+    gcp:
+      region: us-central1
+      autoCreateSubnets: false
+```
+
+## Subnets
+
+### SubnetClaim
+
+To allocate a subnet within a network, create a `SubnetClaim`:
+
+```yaml
+apiVersion: networking.datumapis.com/v1alpha1
+kind: SubnetClaim
+metadata:
+  name: web-tier-subnet-claim
+spec:
+  networkRef:
+    name: production-network
+  
+  # Requested CIDR size
+  prefixLength: 24  # Creates a /24 subnet (256 addresses)
+  
+  # Optional: Specific region/zone
+  location:
+    region: us-central1
+    zone: us-central1-a
+```
+
+### Subnet
+
+Once a `SubnetClaim` is processed, a `Subnet` resource is created:
+
+```yaml
+apiVersion: networking.datumapis.com/v1alpha1
+kind: Subnet
+metadata:
+  name: web-tier-subnet
+  ownerReferences:
+    - apiVersion: networking.datumapis.com/v1alpha1
+      kind: SubnetClaim
+      name: web-tier-subnet-claim
+spec:
+  networkRef:
+    name: production-network
+  
+  # Allocated CIDR block
+  cidrBlock: 10.0.1.0/24
+  
+  location:
+    region: us-central1
+    zone: us-central1-a
+
+status:
+  phase: Ready
+  allocatedIPs: 5
+  availableIPs: 251
+```
+
+**Check subnet status:**
+
+```bash
+kubectl get subnets
+kubectl describe subnet web-tier-subnet
+```
+
+## IP Address Management (IPAM)
+
+Datum provides automatic IP address management:
+
+### How IPAM Works
+
+<Steps>
+  <Step title="Network creation">
+    When you create a `Network` with CIDR blocks, Datum initializes an IP pool.
+  </Step>
+  
+  <Step title="Subnet allocation">
+    `SubnetClaim` resources request subnets of specific sizes. IPAM finds available address space.
+  </Step>
+  
+  <Step title="IP assignment">
+    When workload instances attach to networks, they automatically receive IP addresses from available subnets.
+  </Step>
+  
+  <Step title="Conflict prevention">
+    IPAM ensures no overlapping CIDR blocks or duplicate IP assignments.
+  </Step>
+</Steps>
+
+### Example: Multi-Tier Network
+
+```yaml
+# Network
+apiVersion: networking.datumapis.com/v1alpha1
+kind: Network
+metadata:
+  name: app-network
+spec:
+  ipv4Blocks:
+    - 10.100.0.0/16
+---
+# Web tier subnet
+apiVersion: networking.datumapis.com/v1alpha1
+kind: SubnetClaim
+metadata:
+  name: web-subnet
+spec:
+  networkRef:
+    name: app-network
+  prefixLength: 24  # 10.100.0.0/24
+---
+# Application tier subnet
+apiVersion: networking.datumapis.com/v1alpha1
+kind: SubnetClaim
+metadata:
+  name: app-subnet
+spec:
+  networkRef:
+    name: app-network
+  prefixLength: 24  # 10.100.1.0/24
+---
+# Database tier subnet
+apiVersion: networking.datumapis.com/v1alpha1
+kind: SubnetClaim
+metadata:
+  name: db-subnet
+spec:
+  networkRef:
+    name: app-network
+  prefixLength: 25  # 10.100.2.0/25 (128 addresses)
+```
+
+## NetworkBinding
+
+`NetworkBinding` connects workloads to networks:
+
+```yaml
+apiVersion: networking.datumapis.com/v1alpha1
+kind: NetworkBinding
+metadata:
+  name: web-app-binding
+spec:
+  # Workload to bind
+  workloadRef:
+    name: web-app
+    kind: Workload
+  
+  # Network to attach
+  networkRef:
+    name: production-network
+  
+  # Subnet selection (optional)
+  subnetRef:
+    name: web-tier-subnet
+  
+  # IP address assignment
+  ipAddressAllocation:
+    type: Dynamic  # or Static with specificIP
+```
+
+<Info>
+In many cases, you don't need to manually create `NetworkBinding` resources. When you specify `networkInterfaces` in a Workload spec, bindings are created automatically.
+</Info>
+
+## NetworkPolicy
+
+`NetworkPolicy` resources control traffic between workloads:
+
+```yaml
+apiVersion: networking.datumapis.com/v1alpha1
+kind: NetworkPolicy
+metadata:
+  name: web-tier-policy
+spec:
+  # Apply to workloads matching these labels
+  podSelector:
+    matchLabels:
+      tier: web
+  
+  # Ingress rules
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              tier: frontend
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+  
+  # Egress rules
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              tier: app
+      ports:
+        - protocol: TCP
+          port: 8080
+```
+
+**Common Policies:**
+
+<Tabs>
+  <Tab title="Deny All">
+    ```yaml
+    apiVersion: networking.datumapis.com/v1alpha1
+    kind: NetworkPolicy
+    metadata:
+      name: deny-all
+    spec:
+      podSelector: {}
+      policyTypes:
+        - Ingress
+        - Egress
+    ```
+  </Tab>
+  
+  <Tab title="Allow Same Namespace">
+    ```yaml
+    apiVersion: networking.datumapis.com/v1alpha1
+    kind: NetworkPolicy
+    metadata:
+      name: allow-same-namespace
+    spec:
+      podSelector: {}
+      ingress:
+        - from:
+            - podSelector: {}
+    ```
+  </Tab>
+  
+  <Tab title="Allow Specific CIDR">
+    ```yaml
+    apiVersion: networking.datumapis.com/v1alpha1
+    kind: NetworkPolicy
+    metadata:
+      name: allow-external
+    spec:
+      podSelector:
+        matchLabels:
+          app: web
+      ingress:
+        - from:
+            - ipBlock:
+                cidr: 203.0.113.0/24
+          ports:
+            - protocol: TCP
+              port: 443
+    ```
+  </Tab>
+</Tabs>
+
+## Network Architecture Patterns
+
+### Hub-and-Spoke
+
+```yaml
+# Hub network for shared services
+apiVersion: networking.datumapis.com/v1alpha1
+kind: Network
+metadata:
+  name: hub-network
+spec:
+  ipv4Blocks:
+    - 10.0.0.0/16
+---
+# Spoke network for production
+apiVersion: networking.datumapis.com/v1alpha1
+kind: Network
+metadata:
+  name: prod-spoke-network
+spec:
+  ipv4Blocks:
+    - 10.1.0.0/16
+  peering:
+    - networkRef:
+        name: hub-network
+---
+# Spoke network for staging
+apiVersion: networking.datumapis.com/v1alpha1
+kind: Network
+metadata:
+  name: staging-spoke-network
+spec:
+  ipv4Blocks:
+    - 10.2.0.0/16
+  peering:
+    - networkRef:
+        name: hub-network
+```
+
+### Multi-Region Network
+
+```yaml
+apiVersion: networking.datumapis.com/v1alpha1
+kind: Network
+metadata:
+  name: global-network
+spec:
+  ipv4Blocks:
+    - 10.0.0.0/8
+  
+  # Regional contexts
+  regions:
+    - name: us-central1
+      subnetClaims:
+        - prefixLength: 16  # 10.1.0.0/16
+    - name: europe-west1
+      subnetClaims:
+        - prefixLength: 16  # 10.2.0.0/16
+    - name: asia-southeast1
+      subnetClaims:
+        - prefixLength: 16  # 10.3.0.0/16
+```
+
+## Managing Networks
+
+### Create a Network
+
+```bash
+kubectl apply -f network.yaml
+```
+
+### List Networks
+
+```bash
+kubectl get networks
+```
+
+### View Network Details
+
+```bash
+kubectl describe network production-network
+```
+
+### Update a Network
+
+<Warning>
+Changing CIDR blocks on an existing network may disrupt connectivity. Plan carefully and consider creating a new network instead.
+</Warning>
+
+```bash
+kubectl edit network production-network
+```
+
+### Delete a Network
+
+```bash
+kubectl delete network production-network
+```
+
+<Warning>
+Deleting a network will also delete all associated subnets and network bindings. Workloads using this network will lose connectivity.
+</Warning>
+
+## Troubleshooting
+
+### Network not becoming Ready
+
+```bash
+# Check network status
+kubectl describe network <network-name>
+
+# Look for events
+kubectl get events --field-selector involvedObject.name=<network-name>
+
+# Check Network Services Operator logs
+kubectl logs -n datum-system -l app=network-services-operator
+```
+
+### IP address conflicts
+
+```bash
+# List all networks and their CIDR blocks
+kubectl get networks -o custom-columns=NAME:.metadata.name,CIDR:.spec.ipv4Blocks
+
+# Check subnet allocations
+kubectl get subnets -o custom-columns=NAME:.metadata.name,CIDR:.spec.cidrBlock,NETWORK:.spec.networkRef.name
+```
+
+### Connectivity issues
+
+```bash
+# Verify NetworkBinding exists
+kubectl get networkbindings
+
+# Check NetworkPolicy rules
+kubectl get networkpolicies
+
+# Describe specific policy
+kubectl describe networkpolicy <policy-name>
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Plan IP ranges" icon="map">
+    Choose non-overlapping CIDR blocks. Use RFC 1918 private ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16).
+  </Card>
+  
+  <Card title="Use descriptive names" icon="tag">
+    Name networks and subnets clearly (e.g., `prod-web-network`, `staging-db-subnet`).
+  </Card>
+  
+  <Card title="Implement network policies" icon="shield">
+    Use NetworkPolicy to enforce least-privilege network access.
+  </Card>
+  
+  <Card title="Document architecture" icon="file-lines">
+    Use annotations to document network purpose and configuration.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Workloads" icon="server" href="/concepts/workloads">
+    Learn how to deploy compute instances on networks
+  </Card>
+  <Card title="Gateways" icon="gateway" href="/concepts/gateways">
+    Expose workloads with the Gateway API
+  </Card>
+  <Card title="Security" icon="shield" href="/operations/security">
+    Network security best practices
+  </Card>
+  <Card title="Network Services Operator" icon="github" href="https://github.com/datum-cloud/network-services-operator">
+    Explore the source code
+  </Card>
+</CardGroup>

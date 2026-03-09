@@ -1,0 +1,418 @@
+---
+title: Project
+description: Project custom resource definition for resource grouping and isolation
+---
+
+## Overview
+
+The `Project` custom resource represents a container for related resources within an organization. Projects provide isolation, quota management, and logical grouping for networks, workloads, and other infrastructure resources.
+
+<Note>
+  Project resources are part of the Milo resource manager API group (`resourcemanager.miloapis.com/v1alpha1`).
+</Note>
+
+## Resource Definition
+
+```yaml
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Project
+metadata:
+  name: my-project
+spec:
+  # Project specification
+```
+
+## API Group
+
+<ResponseField name="apiVersion" type="string" required>
+  `resourcemanager.miloapis.com/v1alpha1`
+</ResponseField>
+
+<ResponseField name="kind" type="string" required>
+  `Project`
+</ResponseField>
+
+## Metadata
+
+<ParamField path="metadata.name" type="string" required>
+  The name of the project. Must be unique within the platform.
+  
+  **Naming requirements:**
+  - Minimum length: 6 characters
+  - Maximum length: 30 characters
+  - Cannot contain "datum" (reserved word)
+  - Must follow Kubernetes naming conventions
+  
+  **Personal projects:** Named `personal-project-<hash>` (automatically generated)
+</ParamField>
+
+<ParamField path="metadata.annotations" type="object">
+  Annotations for project metadata.
+  
+  **Standard annotations:**
+  - `kubernetes.io/display-name`: Display name for UIs
+  - `kubernetes.io/description`: Project description
+  
+  **Example:**
+  ```yaml
+  annotations:
+    kubernetes.io/display-name: "Production Environment"
+    kubernetes.io/description: "Production workloads for web application"
+  ```
+</ParamField>
+
+<ParamField path="metadata.labels" type="object">
+  Labels for project organization.
+  
+  **Common labels:**
+  - `environment`: Environment type (dev, staging, prod)
+  - `team`: Team name
+  - `cost-center`: Cost allocation
+</ParamField>
+
+## Spec Fields
+
+<ParamField path="spec.parent" type="object">
+  Reference to the parent organization.
+  
+  <Expandable title="Parent fields">
+    <ParamField path="apiGroup" type="string">
+      API group of the parent: `resourcemanager.miloapis.com`
+    </ParamField>
+    
+    <ParamField path="kind" type="string">
+      Kind of parent: `Organization`
+    </ParamField>
+    
+    <ParamField path="name" type="string" required>
+      Name of the parent organization.
+    </ParamField>
+  </Expandable>
+  
+  <Note>
+    The parent is typically set automatically via UserInfo Extra fields during project creation.
+  </Note>
+</ParamField>
+
+## Status Fields
+
+The Project status reflects the current state:
+
+<ResponseField name="status.phase" type="string">
+  The current phase of the project.
+  
+  **Values:**
+  - `Active`: Project is active and ready
+  - `Pending`: Project is being set up
+  - `Deleting`: Project is being deleted
+</ResponseField>
+
+<ResponseField name="status.namespace" type="string">
+  The namespace created for this project: `project-<name>`
+  
+  All project-scoped resources (networks, workloads, gateways) are created in this namespace.
+</ResponseField>
+
+<ResponseField name="status.conditions" type="array">
+  Detailed conditions about the project state.
+  
+  Each condition includes:
+  - `type`: Condition type (e.g., "Ready", "QuotaExceeded")
+  - `status`: True, False, or Unknown
+  - `reason`: Machine-readable reason code
+  - `message`: Human-readable message
+  - `lastTransitionTime`: When the condition last changed
+</ResponseField>
+
+## Quota Management
+
+Projects claim quota from their parent organization:
+
+### Project Creation Quota
+
+```yaml
+apiVersion: quota.miloapis.com/v1alpha1
+kind: ResourceRegistration
+metadata:
+  name: projects-per-organization
+spec:
+  consumerType:
+    apiGroup: resourcemanager.miloapis.com
+    kind: Organization
+  type: Entity
+  resourceType: resourcemanager.miloapis.com/projects
+  claimingResources:
+  - apiGroup: resourcemanager.miloapis.com
+    kind: Project
+```
+
+**Quota enforcement:**
+- Each project claims 1 unit from the parent organization's project quota
+- Personal organizations have lower project limits
+- Standard organizations can request quota increases
+
+## Validation Policies
+
+### Project Name Validation
+
+Project names are validated on creation:
+
+```yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: validate-project-name
+spec:
+  validations:
+  # Minimum 6 characters
+  - expression: "size(object.metadata.name) >= 6"
+    message: "Project name must be at least 6 characters long."
+  
+  # Maximum 30 characters
+  - expression: "size(object.metadata.name) <= 30"
+    message: "Project name must not exceed 30 characters."
+  
+  # No "datum" in name
+  - expression: "!object.metadata.name.contains('datum')"
+    message: "Project name cannot contain 'datum'."
+```
+
+## Automatic Creation
+
+Personal projects are automatically created by the [PersonalOrganizationController](/api/controllers/personal-organization):
+
+<Steps>
+  <Step title="User Registration Approved">
+    User's `registrationApproval` status becomes `Approved`.
+  </Step>
+  
+  <Step title="Controller Creates Project">
+    PersonalOrganizationController creates a personal project using user impersonation.
+  </Step>
+  
+  <Step title="Webhook Creates PolicyBinding">
+    Project webhook creates a PolicyBinding granting the user ownership.
+  </Step>
+  
+  <Step title="Project Ready">
+    Project becomes active and ready for use.
+  </Step>
+</Steps>
+
+### Impersonation Context
+
+When creating projects, the controller includes parent context:
+
+```go
+Extra: map[string][]string{
+    "iam.miloapis.com/parent-name":      {organizationName},
+    "iam.miloapis.com/parent-type":      {"Organization"},
+    "iam.miloapis.com/parent-api-group": {"resourcemanager.miloapis.com"},
+}
+```
+
+## Examples
+
+### Standard Project
+
+```yaml
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Project
+metadata:
+  name: production-web
+  annotations:
+    kubernetes.io/display-name: "Production Web"
+    kubernetes.io/description: "Production environment for web application"
+  labels:
+    environment: production
+    team: web-team
+```
+
+### Personal Project (Auto-created)
+
+```yaml
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Project
+metadata:
+  name: personal-project-a1b2c3d4
+  annotations:
+    kubernetes.io/display-name: "Personal Project"
+    kubernetes.io/description: "John Doe's Personal Project"
+```
+
+### Development Project
+
+```yaml
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Project
+metadata:
+  name: dev-environment
+  annotations:
+    kubernetes.io/display-name: "Development"
+    kubernetes.io/description: "Development and testing environment"
+  labels:
+    environment: development
+    cost-center: engineering
+```
+
+## kubectl Commands
+
+### List Projects
+
+```bash
+# List all projects
+kubectl get projects
+
+# List projects with labels
+kubectl get projects --show-labels
+
+# Filter by label
+kubectl get projects -l environment=production
+
+# Custom columns
+kubectl get projects \
+  -o custom-columns=NAME:.metadata.name,DISPLAY:.metadata.annotations['kubernetes\.io/display-name'],PHASE:.status.phase
+```
+
+### Get Project Details
+
+```bash
+# Get full specification
+kubectl get project my-project -o yaml
+
+# Get project namespace
+kubectl get project my-project -o jsonpath='{.status.namespace}'
+
+# Describe with events
+kubectl describe project my-project
+```
+
+### Create Project
+
+```bash
+kubectl apply -f project.yaml
+```
+
+### List Resources in Project
+
+```bash
+# Get project namespace
+NAMESPACE=$(kubectl get project my-project -o jsonpath='{.status.namespace}')
+
+# List all resources
+kubectl get all -n $NAMESPACE
+
+# List specific resource types
+kubectl get networks,workloads,gateways -n $NAMESPACE
+```
+
+### Delete Project
+
+```bash
+kubectl delete project my-project
+```
+
+<Warning>
+  Deleting a project will delete all resources within the project namespace (networks, workloads, gateways, etc.).
+</Warning>
+
+## Project Namespace
+
+Each project gets a dedicated namespace: `project-<project-name>`
+
+**Resources created in project namespace:**
+- Networks
+- Workloads
+- Gateways
+- Services
+- ConfigMaps and Secrets
+- PolicyBindings
+
+**Example:**
+```bash
+# Project name: my-project
+# Namespace: project-my-project
+
+kubectl get networks -n project-my-project
+kubectl get workloads -n project-my-project
+kubectl get gateways -n project-my-project
+```
+
+## Access Control
+
+Projects use PolicyBindings for access control. When a project is created, a PolicyBinding is automatically created granting the creator ownership.
+
+### Example PolicyBinding
+
+```yaml
+apiVersion: iam.miloapis.com/v1alpha1
+kind: PolicyBinding
+metadata:
+  name: project-owner-<user-id>
+  namespace: project-my-project
+spec:
+  scope:
+    kind: Project
+    name: my-project
+  subjects:
+  - kind: User
+    name: user-12345
+  roleRef:
+    kind: Role
+    name: project-owner
+```
+
+## Related Resources
+
+- [Organization](/api/resources/organization) - Projects belong to organizations
+- [Network](/api/resources/network) - Create networks within projects
+- [Workload](/api/resources/workload) - Deploy workloads within projects
+- [Gateway](/api/resources/gateway) - Expose services within projects
+- [PersonalOrganizationController](/api/controllers/personal-organization) - Creates personal projects
+
+## Troubleshooting
+
+<Accordion title="Cannot create project">
+  **Check:**
+  1. Verify project name meets requirements (6-30 characters, no "datum")
+  2. Check organization project quota: `kubectl get resourcequota -n organization-<org-name>`
+  3. Ensure you have permission to create projects
+  4. Verify parent organization exists and is active
+</Accordion>
+
+<Accordion title="Personal project not created">
+  **Check:**
+  1. Verify user registration approval: `kubectl get user <name> -o jsonpath='{.status.registrationApproval}'`
+  2. Must be in `Approved` state
+  3. Check PersonalOrganizationController logs: `kubectl logs -n datum-system deployment/datum-controller-manager`
+  4. Verify personal organization exists first
+</Accordion>
+
+<Accordion title="Project name validation failed">
+  **Common errors:**
+  - "Too short" → Name must be at least 6 characters
+  - "Too long" → Name must not exceed 30 characters
+  - "Contains 'datum'" → Choose a name without the reserved word "datum"
+  
+  **Fix:** Choose a name that meets all validation requirements
+</Accordion>
+
+<Accordion title="Cannot access project resources">
+  **Check:**
+  1. Verify you have a PolicyBinding in the project: `kubectl get policybindings -n project-<name>`
+  2. Check your organization membership: `kubectl get organizationmemberships -n organization-<org-name>`
+  3. Ensure the project is in `Active` phase
+  4. Verify the project namespace exists: `kubectl get namespace project-<name>`
+</Accordion>
+
+<Accordion title="Project stuck in Pending">
+  **Check:**
+  1. View project status: `kubectl describe project <name>`
+  2. Check for error conditions in status.conditions
+  3. Verify quota is available in parent organization
+  4. Check project controller logs
+</Accordion>
+
+## Source Reference
+
+Source: `internal/controller/resourcemanager/personal_organization_controller.go:140-193`

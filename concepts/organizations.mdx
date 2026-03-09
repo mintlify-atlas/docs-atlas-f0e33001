@@ -1,0 +1,502 @@
+---
+title: Organizations
+description: Organizational structure, membership, and RBAC in Datum Cloud
+---
+
+# Organizations
+
+Organizations are the top-level resource hierarchy in Datum Cloud. They provide isolated workspaces for teams and individuals, with built-in RBAC, quota management, and membership controls.
+
+## Overview
+
+Every user in Datum Cloud has at least one organization:
+- **Personal Organization**: Automatically created for each user
+- **Standard Organizations**: Created for teams and companies
+
+Organizations contain:
+- **Projects**: Isolated workspaces for resources
+- **Members**: Users with assigned roles
+- **Quotas**: Resource limits and allocations
+- **Resources**: Networks, Workloads, Gateways, etc.
+
+## Organization Types
+
+Datum supports two types of organizations:
+
+<Tabs>
+  <Tab title="Personal">
+    **Personal Organizations** are automatically created when a user signs up.
+    
+    **Characteristics:**
+    - One per user
+    - Cannot be deleted (tied to user lifecycle)
+    - Display name cannot be changed
+    - Maximum 2 projects
+    - Single owner (the user)
+    
+    **Example:**
+    ```yaml
+    apiVersion: resourcemanager.miloapis.com/v1alpha1
+    kind: Organization
+    metadata:
+      name: personal-org-a1b2c3d4
+      annotations:
+        kubernetes.io/display-name: "John Doe's Personal Org"
+        kubernetes.io/description: "John Doe's Personal Org"
+    spec:
+      type: Personal
+    status:
+      phase: Ready
+    ```
+    
+    <Info>
+    Personal organizations are created automatically by the Personal Organization Controller at `internal/controller/resourcemanager/personal_organization_controller.go:60`.
+    </Info>
+  </Tab>
+  
+  <Tab title="Standard">
+    **Standard Organizations** are for teams and companies.
+    
+    **Characteristics:**
+    - Created manually by users
+    - Can be deleted by owners
+    - Display name can be changed
+    - Maximum 10 projects
+    - Multiple members with different roles
+    
+    **Example:**
+    ```yaml
+    apiVersion: resourcemanager.miloapis.com/v1alpha1
+    kind: Organization
+    metadata:
+      name: acme-corp
+      annotations:
+        kubernetes.io/display-name: "Acme Corporation"
+        kubernetes.io/description: "Acme Corp engineering team"
+    spec:
+      type: Standard
+    ```
+  </Tab>
+</Tabs>
+
+## Creating Organizations
+
+### Via kubectl
+
+```yaml
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Organization
+metadata:
+  name: my-company
+  annotations:
+    kubernetes.io/display-name: "My Company"
+    kubernetes.io/description: "Engineering team workspace"
+spec:
+  type: Standard
+```
+
+```bash
+kubectl apply -f organization.yaml
+```
+
+### Via Datum Cloud Dashboard
+
+<Steps>
+  <Step title="Navigate to Organizations">
+    Click "Organizations" in the sidebar.
+  </Step>
+  
+  <Step title="Click Create Organization">
+    Click the "+ New Organization" button.
+  </Step>
+  
+  <Step title="Fill in details">
+    - Name: URL-friendly identifier (cannot be changed)
+    - Display name: Human-readable name
+    - Description: Optional description
+  </Step>
+  
+  <Step title="Create">
+    Click "Create Organization".
+  </Step>
+</Steps>
+
+## Organization Membership
+
+`OrganizationMembership` resources grant users access to organizations with specific roles.
+
+### Structure
+
+```yaml
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: OrganizationMembership
+metadata:
+  name: membership-john-doe
+  namespace: organization-my-company  # Organization namespace
+spec:
+  # Organization reference
+  organizationRef:
+    name: my-company
+  
+  # User reference
+  userRef:
+    name: user-john-doe
+  
+  # Assigned roles
+  roles:
+    - name: owner
+      namespace: datum-cloud
+```
+
+### Adding Members
+
+<Steps>
+  <Step title="Create membership resource">
+    ```yaml
+    apiVersion: resourcemanager.miloapis.com/v1alpha1
+    kind: OrganizationMembership
+    metadata:
+      name: membership-jane-smith
+      namespace: organization-my-company
+    spec:
+      organizationRef:
+        name: my-company
+      userRef:
+        name: user-jane-smith
+      roles:
+        - name: editor
+          namespace: datum-cloud
+    ```
+  </Step>
+  
+  <Step title="Apply the resource">
+    ```bash
+    kubectl apply -f membership.yaml
+    ```
+  </Step>
+  
+  <Step title="Verify membership">
+    ```bash
+    kubectl get organizationmemberships -n organization-my-company
+    ```
+  </Step>
+</Steps>
+
+### Available Roles
+
+Datum provides three built-in roles for organization members:
+
+<CardGroup cols={3}>
+  <Card title="Owner" icon="crown">
+    **Full access** to all resources
+    
+    - Create/delete projects
+    - Manage members
+    - Configure quotas
+    - Delete organization
+    
+    Defined in `config/assignable-organization-roles/roles/datum-cloud-owner.yaml:1`
+  </Card>
+  
+  <Card title="Editor" icon="pen">
+    **Read-write access** to resources
+    
+    - Create/update/delete workloads
+    - Manage networks
+    - Configure gateways
+    - Cannot manage members
+  </Card>
+  
+  <Card title="Viewer" icon="eye">
+    **Read-only access** to resources
+    
+    - View all resources
+    - Cannot create or modify
+    - Useful for auditors
+  </Card>
+</CardGroup>
+
+**Role hierarchy from source:**
+
+```yaml
+# From config/assignable-organization-roles/roles/datum-cloud-owner.yaml
+apiVersion: iam.miloapis.com/v1alpha1
+kind: Role
+metadata:
+  name: owner
+  annotations:
+    kubernetes.io/display-name: Owner
+    kubernetes.io/description: "Full access to all Datum Cloud resources in the organization"
+spec:
+  inheritedRoles:
+    - name: viewer
+      namespace: datum-cloud
+    - name: core-admin
+      namespace: milo-system
+    - name: networking.datumapis.com-admin
+      namespace: milo-system
+    - name: resourcemanager.miloapis.com-project-admin
+      namespace: milo-system
+    - name: resourcemanager.miloapis.com-organization-admin
+      namespace: milo-system
+```
+
+### Removing Members
+
+```bash
+kubectl delete organizationmembership membership-jane-smith -n organization-my-company
+```
+
+## Managing Organizations
+
+### List Organizations
+
+```bash
+kubectl get organizations
+```
+
+```
+NAME                      TYPE        PROJECTS   AGE
+personal-org-a1b2c3d4     Personal    1          30d
+my-company                Standard    5          10d
+```
+
+### View Organization Details
+
+```bash
+kubectl describe organization my-company
+```
+
+### Update Organization
+
+```bash
+kubectl edit organization my-company
+```
+
+<Warning>
+For Personal organizations, the display name annotation cannot be changed. This is enforced by a ValidatingAdmissionPolicy at `config/services/resourcemanager.miloapis.com/validation/organization-update-policy.yaml:1`:
+
+```yaml
+expression: "object.spec.type != 'Personal' || oldObject.metadata.annotations['kubernetes.io/display-name'] == object.metadata.annotations['kubernetes.io/display-name']"
+message: "The display name of a personal organization cannot be changed."
+```
+</Warning>
+
+### Delete Organization
+
+```bash
+kubectl delete organization my-company
+```
+
+<Warning>
+- Deleting an organization will delete all projects and resources within it
+- Personal organizations cannot be deleted (tied to user lifecycle)
+- You must be an Owner to delete an organization
+</Warning>
+
+## Organization Namespaces
+
+Each organization gets a dedicated Kubernetes namespace:
+
+```
+organization-<organization-name>
+```
+
+For example:
+- Organization `my-company` → Namespace `organization-my-company`
+- Organization `personal-org-a1b2c3d4` → Namespace `organization-personal-org-a1b2c3d4`
+
+**Resources in organization namespace:**
+- OrganizationMemberships
+- ResourceGrants (quota allocations)
+- ResourceClaims (quota usage)
+- Organization-scoped policies
+
+```bash
+# List resources in organization namespace
+kubectl get all -n organization-my-company
+
+# View memberships
+kubectl get organizationmemberships -n organization-my-company
+
+# View quota allocations
+kubectl get resourcegrants -n organization-my-company
+```
+
+## Quota Management
+
+Organizations have resource quotas enforced automatically.
+
+### Default Quotas
+
+From `config/services/resourcemanager.miloapis.com/quota/grant-policies/`:
+
+<Tabs>
+  <Tab title="Personal Organization">
+    **Max 2 projects**
+    
+    ```yaml
+    # From personal-org-grant-policy.yaml
+    spec:
+      allowances:
+        - resourceType: resourcemanager.miloapis.com/projects
+          buckets:
+            - amount: 2
+    ```
+  </Tab>
+  
+  <Tab title="Standard Organization">
+    **Max 10 projects**
+    
+    ```yaml
+    # From standard-org-grant-policy.yaml
+    spec:
+      allowances:
+        - resourceType: resourcemanager.miloapis.com/projects
+          buckets:
+            - amount: 10
+    ```
+  </Tab>
+</Tabs>
+
+### View Quota Usage
+
+```bash
+# View quota grants
+kubectl get resourcegrants -n organization-my-company
+
+# View quota claims
+kubectl get resourceclaims -n organization-my-company
+
+# Describe grant to see usage
+kubectl describe resourcegrant default-project-quota -n organization-my-company
+```
+
+**Example output:**
+
+```yaml
+Name:         default-project-quota
+Namespace:    organization-my-company
+Spec:
+  Consumer Ref:
+    API Group:  resourcemanager.miloapis.com
+    Kind:       Organization
+    Name:       my-company
+  Allowances:
+    Resource Type:  resourcemanager.miloapis.com/projects
+    Buckets:
+      Amount:  10
+Status:
+  Allocated:  5
+  Available:  5
+```
+
+### Quota Enforcement
+
+Quotas are enforced via `ClaimCreationPolicy`. From `config/services/resourcemanager.miloapis.com/quota/claim-policies/claim-creation-policy.yaml:1`:
+
+```yaml
+apiVersion: quota.miloapis.com/v1alpha1
+kind: ClaimCreationPolicy
+metadata:
+  name: project-quota-enforcement-policy
+spec:
+  trigger:
+    resource:
+      apiVersion: resourcemanager.miloapis.com/v1alpha1
+      kind: Project
+  target:
+    resourceClaimTemplate:
+      spec:
+        requests:
+          - resourceType: resourcemanager.miloapis.com/projects
+            amount: 1
+```
+
+When a project is created, a `ResourceClaim` is automatically created. If the organization has reached its quota limit, the claim (and thus the project creation) will fail.
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use Standard orgs for teams" icon="users">
+    Create Standard organizations for teams, even if you're the only member initially.
+  </Card>
+  
+  <Card title="Principle of least privilege" icon="shield">
+    Assign the minimum role necessary. Use Viewer for read-only access.
+  </Card>
+  
+  <Card title="Document with annotations" icon="note">
+    Use annotations for descriptions, cost centers, or team contacts.
+  </Card>
+  
+  <Card title="Monitor quota usage" icon="chart-line">
+    Regularly check quota usage to avoid hitting limits.
+  </Card>
+  
+  <Card title="Audit memberships" icon="list-check">
+    Regularly review organization members and remove inactive users.
+  </Card>
+  
+  <Card title="Use multiple orgs" icon="sitemap">
+    Separate production and non-production environments into different organizations.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Cannot create project (quota exceeded)
+
+```bash
+# Check quota usage
+kubectl describe resourcegrant default-project-quota -n organization-my-company
+
+# List existing projects
+kubectl get projects --all-namespaces -l organization=my-company
+
+# Delete unused projects to free quota
+kubectl delete project old-project
+```
+
+### Member cannot access resources
+
+```bash
+# Verify membership exists
+kubectl get organizationmemberships -n organization-my-company
+
+# Check assigned roles
+kubectl describe organizationmembership membership-john-doe -n organization-my-company
+
+# Verify role exists
+kubectl get role owner -n datum-cloud
+```
+
+### Personal organization issues
+
+```bash
+# Check if personal org was created
+kubectl get organizations -l type=Personal
+
+# Check Personal Organization Controller logs
+kubectl logs -n datum-system -l app=datum-controller-manager | grep personal-organization
+
+# Verify user exists
+kubectl get users
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Projects" icon="folder" href="/concepts/projects">
+    Learn about projects and resource organization
+  </Card>
+  <Card title="Quota Management" icon="gauge" href="/operations/quota-management">
+    Deep dive into quota policies and management
+  </Card>
+  <Card title="Security" icon="shield" href="/operations/security">
+    RBAC and security best practices
+  </Card>
+  <Card title="Managing Resources" icon="terminal" href="/operations/managing-resources">
+    kubectl commands for organizations
+  </Card>
+</CardGroup>

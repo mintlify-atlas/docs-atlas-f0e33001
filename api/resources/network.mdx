@@ -1,0 +1,261 @@
+---
+title: Network
+description: Network custom resource definition for infrastructure connectivity
+---
+
+## Overview
+
+The `Network` custom resource defines network infrastructure for your workloads. Networks provide isolated layer-3 connectivity for resources within a project.
+
+<Note>
+  Network resources are part of the Milo networking API group (`networking.miloapis.com/v1alpha1`).
+</Note>
+
+## Resource Definition
+
+```yaml
+apiVersion: networking.miloapis.com/v1alpha1
+kind: Network
+metadata:
+  name: my-network
+  namespace: project-<project-name>
+spec:
+  # Network specification fields
+```
+
+## API Group
+
+<ResponseField name="apiVersion" type="string" required>
+  `networking.miloapis.com/v1alpha1`
+</ResponseField>
+
+<ResponseField name="kind" type="string" required>
+  `Network`
+</ResponseField>
+
+## Metadata
+
+<ParamField path="metadata.name" type="string" required>
+  The name of the network. Must be unique within the namespace.
+</ParamField>
+
+<ParamField path="metadata.namespace" type="string" required>
+  The project namespace where this network is created. Format: `project-<project-name>`
+</ParamField>
+
+<ParamField path="metadata.labels" type="object">
+  Optional labels to organize and select networks.
+  
+  **Common labels:**
+  - `app.kubernetes.io/name`: Application name
+  - `app.kubernetes.io/component`: Component type
+  - `environment`: Environment (dev, staging, prod)
+</ParamField>
+
+<ParamField path="metadata.annotations" type="object">
+  Optional annotations for additional metadata.
+  
+  **Standard annotations:**
+  - `kubernetes.io/description`: Human-readable description
+  - `kubernetes.io/display-name`: Display name for UIs
+</ParamField>
+
+## Spec Fields
+
+The Network spec defines the desired network configuration:
+
+<ParamField path="spec.ipv4Cidr" type="string">
+  The IPv4 CIDR block for this network.
+  
+  **Example:** `10.0.0.0/16`
+</ParamField>
+
+<ParamField path="spec.ipv6Cidr" type="string">
+  The IPv6 CIDR block for this network (optional).
+  
+  **Example:** `fd00::/64`
+</ParamField>
+
+<ParamField path="spec.provider" type="object">
+  Provider-specific configuration for the network backend.
+  
+  <Expandable title="Provider types">
+    <ResponseField name="gcp" type="object">
+      Google Cloud Platform VPC configuration.
+      
+      <Expandable title="GCP fields">
+        <ResponseField name="projectId" type="string">
+          GCP project ID where the VPC will be created.
+        </ResponseField>
+        
+        <ResponseField name="region" type="string">
+          GCP region for the network.
+        </ResponseField>
+        
+        <ResponseField name="autoCreateSubnetworks" type="boolean" default="false">
+          Whether to automatically create subnetworks.
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="custom" type="object">
+      Custom provider configuration for other backends.
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+## Status Fields
+
+The Network status reflects the current state of the network:
+
+<ResponseField name="status.phase" type="string">
+  The current phase of the network.
+  
+  **Values:**
+  - `Pending`: Network creation is pending
+  - `Provisioning`: Network is being created
+  - `Ready`: Network is ready for use
+  - `Failed`: Network creation failed
+  - `Deleting`: Network is being deleted
+</ResponseField>
+
+<ResponseField name="status.conditions" type="array">
+  Detailed conditions about the network state.
+  
+  Each condition includes:
+  - `type`: Condition type (e.g., "Ready")
+  - `status`: True, False, or Unknown
+  - `reason`: Machine-readable reason code
+  - `message`: Human-readable message
+  - `lastTransitionTime`: When the condition last changed
+</ResponseField>
+
+<ResponseField name="status.providerStatus" type="object">
+  Provider-specific status information (e.g., VPC ID, subnet IDs).
+</ResponseField>
+
+## Examples
+
+### Basic Network
+
+```yaml
+apiVersion: networking.miloapis.com/v1alpha1
+kind: Network
+metadata:
+  name: dev-network
+  namespace: project-myproject
+  annotations:
+    kubernetes.io/description: "Development environment network"
+spec:
+  ipv4Cidr: 10.0.0.0/16
+```
+
+### GCP VPC Network
+
+```yaml
+apiVersion: networking.miloapis.com/v1alpha1
+kind: Network
+metadata:
+  name: prod-network
+  namespace: project-production
+  labels:
+    environment: production
+    app.kubernetes.io/name: datum-app
+spec:
+  ipv4Cidr: 10.1.0.0/16
+  provider:
+    gcp:
+      projectId: my-gcp-project
+      region: us-central1
+      autoCreateSubnetworks: false
+```
+
+### Dual-stack Network
+
+```yaml
+apiVersion: networking.miloapis.com/v1alpha1
+kind: Network
+metadata:
+  name: dual-stack-network
+  namespace: project-myproject
+spec:
+  ipv4Cidr: 10.2.0.0/16
+  ipv6Cidr: fd00::/64
+```
+
+## kubectl Commands
+
+### Create a Network
+
+```bash
+kubectl apply -f network.yaml
+```
+
+### List Networks
+
+```bash
+# List all networks in a project
+kubectl get networks -n project-myproject
+
+# List networks across all projects
+kubectl get networks --all-namespaces
+
+# List with custom columns
+kubectl get networks -n project-myproject \
+  -o custom-columns=NAME:.metadata.name,CIDR:.spec.ipv4Cidr,PHASE:.status.phase
+```
+
+### Get Network Details
+
+```bash
+# Get full network specification
+kubectl get network my-network -n project-myproject -o yaml
+
+# Get network status
+kubectl get network my-network -n project-myproject -o jsonpath='{.status}'
+```
+
+### Update a Network
+
+```bash
+# Edit network in your editor
+kubectl edit network my-network -n project-myproject
+
+# Apply changes from file
+kubectl apply -f network.yaml
+```
+
+### Delete a Network
+
+```bash
+kubectl delete network my-network -n project-myproject
+```
+
+### Watch Network Status
+
+```bash
+kubectl get network my-network -n project-myproject --watch
+```
+
+## Related Resources
+
+- [Workload](/api/resources/workload) - Deploy workloads to networks
+- [Gateway](/api/resources/gateway) - Expose services via gateways
+- [Project](/api/resources/project) - Networks are scoped to projects
+
+## Troubleshooting
+
+<Accordion title="Network stuck in Provisioning">
+  **Check:**
+  1. View network status: `kubectl describe network <name> -n <namespace>`
+  2. Check for error conditions in status.conditions
+  3. Verify provider credentials are configured
+  4. Check quota limits in your cloud provider
+</Accordion>
+
+<Accordion title="Cannot create workload in network">
+  **Check:**
+  1. Verify network is in `Ready` phase
+  2. Ensure workload namespace matches network namespace
+  3. Check network RBAC permissions
+</Accordion>

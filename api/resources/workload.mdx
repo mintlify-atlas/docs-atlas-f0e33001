@@ -1,0 +1,384 @@
+---
+title: Workload
+description: Workload custom resource definition for deploying applications
+---
+
+## Overview
+
+The `Workload` custom resource defines application workloads deployed on Datum Cloud infrastructure. Workloads represent containerized applications with their compute, networking, and storage requirements.
+
+<Note>
+  Workload resources are part of the Milo compute API group (`compute.miloapis.com/v1alpha1`).
+</Note>
+
+## Resource Definition
+
+```yaml
+apiVersion: compute.miloapis.com/v1alpha1
+kind: Workload
+metadata:
+  name: my-workload
+  namespace: project-<project-name>
+spec:
+  # Workload specification fields
+```
+
+## API Group
+
+<ResponseField name="apiVersion" type="string" required>
+  `compute.miloapis.com/v1alpha1`
+</ResponseField>
+
+<ResponseField name="kind" type="string" required>
+  `Workload`
+</ResponseField>
+
+## Metadata
+
+<ParamField path="metadata.name" type="string" required>
+  The name of the workload. Must be unique within the namespace.
+</ParamField>
+
+<ParamField path="metadata.namespace" type="string" required>
+  The project namespace where this workload is deployed. Format: `project-<project-name>`
+</ParamField>
+
+<ParamField path="metadata.labels" type="object">
+  Optional labels to organize and select workloads.
+  
+  **Common labels:**
+  - `app.kubernetes.io/name`: Application name
+  - `app.kubernetes.io/version`: Application version
+  - `app.kubernetes.io/component`: Component type (backend, frontend, etc.)
+  - `environment`: Environment (dev, staging, prod)
+</ParamField>
+
+<ParamField path="metadata.annotations" type="object">
+  Optional annotations for additional metadata.
+  
+  **Standard annotations:**
+  - `kubernetes.io/description`: Human-readable description
+  - `kubernetes.io/display-name`: Display name for UIs
+</ParamField>
+
+## Spec Fields
+
+The Workload spec defines the desired workload configuration:
+
+<ParamField path="spec.replicas" type="integer" default="1">
+  The desired number of replicas for this workload.
+</ParamField>
+
+<ParamField path="spec.selector" type="object">
+  Label selector for identifying pods managed by this workload.
+  
+  <Expandable title="Selector fields">
+    <ParamField path="matchLabels" type="object">
+      Key-value pairs that must match pod labels.
+    </ParamField>
+    
+    <ParamField path="matchExpressions" type="array">
+      Set-based label requirements.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.template" type="object" required>
+  Pod template defining the workload containers.
+  
+  <Expandable title="Template fields">
+    <ParamField path="metadata" type="object">
+      Pod metadata (labels, annotations).
+    </ParamField>
+    
+    <ParamField path="spec" type="object" required>
+      Pod specification.
+      
+      <Expandable title="Pod spec fields">
+        <ParamField path="containers" type="array" required>
+          List of containers in the pod.
+          
+          Each container includes:
+          - `name`: Container name
+          - `image`: Container image
+          - `ports`: Exposed ports
+          - `env`: Environment variables
+          - `resources`: CPU/memory requests and limits
+          - `volumeMounts`: Volume mount points
+        </ParamField>
+        
+        <ParamField path="volumes" type="array">
+          Volumes available to containers.
+        </ParamField>
+        
+        <ParamField path="serviceAccountName" type="string">
+          Service account for pod authentication.
+        </ParamField>
+      </Expandable>
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.networkRef" type="object">
+  Reference to the network this workload should use.
+  
+  <Expandable title="NetworkRef fields">
+    <ParamField path="name" type="string" required>
+      Name of the Network resource.
+    </ParamField>
+    
+    <ParamField path="namespace" type="string">
+      Namespace of the Network (defaults to workload namespace).
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField path="spec.provider" type="object">
+  Provider-specific configuration for workload placement.
+  
+  <Expandable title="Provider types">
+    <ResponseField name="gcp" type="object">
+      Google Cloud Platform configuration.
+      
+      <Expandable title="GCP fields">
+        <ResponseField name="region" type="string">
+          GCP region for workload deployment.
+        </ResponseField>
+        
+        <ResponseField name="zone" type="string">
+          Specific GCP zone (optional).
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+  </Expandable>
+</ParamField>
+
+## Status Fields
+
+The Workload status reflects the current state:
+
+<ResponseField name="status.phase" type="string">
+  The current phase of the workload.
+  
+  **Values:**
+  - `Pending`: Workload deployment is pending
+  - `Provisioning`: Resources are being created
+  - `Running`: Workload is running
+  - `Failed`: Workload deployment failed
+  - `Deleting`: Workload is being deleted
+</ResponseField>
+
+<ResponseField name="status.replicas" type="integer">
+  Total number of replicas.
+</ResponseField>
+
+<ResponseField name="status.readyReplicas" type="integer">
+  Number of ready replicas.
+</ResponseField>
+
+<ResponseField name="status.availableReplicas" type="integer">
+  Number of available replicas.
+</ResponseField>
+
+<ResponseField name="status.conditions" type="array">
+  Detailed conditions about the workload state.
+  
+  Each condition includes:
+  - `type`: Condition type (e.g., "Available", "Progressing")
+  - `status`: True, False, or Unknown
+  - `reason`: Machine-readable reason code
+  - `message`: Human-readable message
+  - `lastTransitionTime`: When the condition last changed
+</ResponseField>
+
+## Examples
+
+### Basic Web Application
+
+```yaml
+apiVersion: compute.miloapis.com/v1alpha1
+kind: Workload
+metadata:
+  name: web-app
+  namespace: project-myproject
+  labels:
+    app.kubernetes.io/name: web-app
+    environment: production
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web-app
+  template:
+    metadata:
+      labels:
+        app: web-app
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+          name: http
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+```
+
+### Workload with Network Reference
+
+```yaml
+apiVersion: compute.miloapis.com/v1alpha1
+kind: Workload
+metadata:
+  name: api-server
+  namespace: project-myproject
+spec:
+  replicas: 2
+  networkRef:
+    name: prod-network
+  template:
+    spec:
+      containers:
+      - name: api
+        image: myregistry/api:v1.0
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: url
+        resources:
+          requests:
+            cpu: 200m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+```
+
+### Multi-Container Workload
+
+```yaml
+apiVersion: compute.miloapis.com/v1alpha1
+kind: Workload
+metadata:
+  name: app-with-sidecar
+  namespace: project-myproject
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+      - name: app
+        image: myapp:latest
+        ports:
+        - containerPort: 3000
+      - name: log-collector
+        image: fluent/fluent-bit:latest
+        volumeMounts:
+        - name: logs
+          mountPath: /var/log
+      volumes:
+      - name: logs
+        emptyDir: {}
+```
+
+## kubectl Commands
+
+### Create a Workload
+
+```bash
+kubectl apply -f workload.yaml
+```
+
+### List Workloads
+
+```bash
+# List all workloads in a project
+kubectl get workloads -n project-myproject
+
+# List with custom columns
+kubectl get workloads -n project-myproject \
+  -o custom-columns=NAME:.metadata.name,REPLICAS:.status.replicas,READY:.status.readyReplicas,PHASE:.status.phase
+```
+
+### Get Workload Details
+
+```bash
+# Get full specification
+kubectl get workload web-app -n project-myproject -o yaml
+
+# Get status only
+kubectl get workload web-app -n project-myproject -o jsonpath='{.status}'
+
+# Describe with events
+kubectl describe workload web-app -n project-myproject
+```
+
+### Scale a Workload
+
+```bash
+# Scale to 5 replicas
+kubectl scale workload web-app -n project-myproject --replicas=5
+
+# Patch replicas
+kubectl patch workload web-app -n project-myproject \
+  -p '{"spec":{"replicas":5}}'
+```
+
+### Update Workload Image
+
+```bash
+kubectl set image workload/web-app -n project-myproject \
+  nginx=nginx:1.26
+```
+
+### Delete a Workload
+
+```bash
+kubectl delete workload web-app -n project-myproject
+```
+
+### Watch Workload Status
+
+```bash
+kubectl get workload web-app -n project-myproject --watch
+```
+
+## Related Resources
+
+- [Network](/api/resources/network) - Connect workloads to networks
+- [Gateway](/api/resources/gateway) - Expose workloads externally
+- [Project](/api/resources/project) - Workloads are scoped to projects
+
+## Troubleshooting
+
+<Accordion title="Workload stuck in Provisioning">
+  **Check:**
+  1. View workload status: `kubectl describe workload <name> -n <namespace>`
+  2. Check for error conditions in status.conditions
+  3. Verify container images are accessible
+  4. Check resource quotas: `kubectl get resourcequota -n <namespace>`
+</Accordion>
+
+<Accordion title="Replicas not becoming ready">
+  **Check:**
+  1. View pod status: `kubectl get pods -n <namespace> -l app=<selector>`
+  2. Check pod logs: `kubectl logs -n <namespace> <pod-name>`
+  3. Verify network connectivity
+  4. Check resource limits and node capacity
+</Accordion>
+
+<Accordion title="Cannot scale workload">
+  **Check:**
+  1. Verify you have update permissions on the workload
+  2. Check if quota limits are exceeded
+  3. Ensure the workload is in a valid state (not deleting)
+</Accordion>

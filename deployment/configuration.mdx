@@ -1,0 +1,682 @@
+---
+title: Configuration
+description: Configuration options, environment variables, and customization for Datum Cloud
+---
+
+# Configuration
+
+Datum Cloud can be configured through environment variables, command-line flags, and Kubernetes manifests. This guide covers all available configuration options.
+
+## Configuration Methods
+
+<CardGroup cols={3}>
+  <Card title="Environment Variables" icon="gear">
+    Set via deployment manifests
+  </Card>
+  <Card title="Command-Line Flags" icon="terminal">
+    Pass to controller manager
+  </Card>
+  <Card title="Config Files" icon="file">
+    YAML configuration files
+  </Card>
+</CardGroup>
+
+## Controller Manager Configuration
+
+The Datum controller manager accepts various configuration options. Default configuration from `config/manager/manager.yaml:51`:
+
+### Command-Line Arguments
+
+```yaml
+args:
+  - controller-manager
+  - --metrics-bind-address=$(METRICS_BIND_ADDRESS)
+  - --health-probe-bind-address=$(HEALTH_PROBE_BIND_ADDRESS)
+  - --leader-elect=$(LEADER_ELECT)
+  - --leader-election-id=$(LEADER_ELECTION_ID)
+  - --leader-election-namespace=$(LEADER_ELECTION_NAMESPACE)
+  - --leader-election-lease-duration=$(LEADER_ELECTION_LEASE_DURATION)
+  - --leader-election-renew-deadline=$(LEADER_ELECTION_RENEW_DEADLINE)
+  - --leader-election-retry-period=$(LEADER_ELECTION_RETRY_PERIOD)
+  - --leader-election-release-on-cancel=$(LEADER_ELECTION_RELEASE_ON_CANCEL)
+  - --metrics-secure=$(METRICS_SECURE)
+  - --enable-http2=$(ENABLE_HTTP2)
+  - --config=$(CONFIG_FILE)
+```
+
+### Environment Variables
+
+From `config/manager/manager.yaml:71`:
+
+<Tabs>
+  <Tab title="Metrics">
+    **METRICS_BIND_ADDRESS**
+    
+    Address for Prometheus metrics endpoint.
+    
+    - Default: `"0"` (disabled, use METRICS_SECURE instead)
+    - Format: `<host>:<port>` or `"0"` to disable
+    - Example: `":8080"`
+    
+    **METRICS_SECURE**
+    
+    Enable secure metrics endpoint with TLS.
+    
+    - Default: `"true"`
+    - Values: `"true"` or `"false"`
+    
+    **METRICS_CERT_PATH**
+    
+    Path to TLS certificates for metrics.
+    
+    - Default: `""` (uses default paths)
+    - Example: `"/certs/metrics"`
+    
+    **METRICS_CERT_NAME**
+    
+    Certificate filename.
+    
+    - Default: `"tls.crt"`
+    
+    **METRICS_CERT_KEY**
+    
+    Private key filename.
+    
+    - Default: `"tls.key"`
+  </Tab>
+  
+  <Tab title="Health Probes">
+    **HEALTH_PROBE_BIND_ADDRESS**
+    
+    Address for health check endpoint.
+    
+    - Default: `":8081"`
+    - Format: `<host>:<port>`
+    - Used by: Kubernetes liveness/readiness probes
+    
+    Health endpoints:
+    - `/healthz` - Liveness probe
+    - `/readyz` - Readiness probe
+  </Tab>
+  
+  <Tab title="Leader Election">
+    **LEADER_ELECT**
+    
+    Enable leader election for HA deployments.
+    
+    - Default: `"true"`
+    - Set to `"false"` only for single-replica dev environments
+    
+    **LEADER_ELECTION_ID**
+    
+    Unique ID for leader election lease.
+    
+    - Default: `"81afa9db.datumapis.com"`
+    - Change if running multiple Datum deployments
+    
+    **LEADER_ELECTION_NAMESPACE**
+    
+    Namespace for leader election lease.
+    
+    - Default: `""` (uses controller's namespace)
+    - Set explicitly for cross-namespace leader election
+    
+    **LEADER_ELECTION_LEASE_DURATION**
+    
+    How long a leader holds the lease.
+    
+    - Default: `"15s"`
+    - Format: duration string (e.g., `"30s"`, `"1m"`)
+    
+    **LEADER_ELECTION_RENEW_DEADLINE**
+    
+    Time before lease expiry to attempt renewal.
+    
+    - Default: `"10s"`
+    - Must be < LEASE_DURATION
+    
+    **LEADER_ELECTION_RETRY_PERIOD**
+    
+    How often to attempt lease acquisition.
+    
+    - Default: `"2s"`
+    - Must be < RENEW_DEADLINE
+    
+    **LEADER_ELECTION_RELEASE_ON_CANCEL**
+    
+    Release leadership on graceful shutdown.
+    
+    - Default: `"false"`
+    - Set to `"true"` for faster failover
+  </Tab>
+  
+  <Tab title="Other">
+    **ENABLE_HTTP2**
+    
+    Enable HTTP/2 for webhook and metrics servers.
+    
+    - Default: `"false"`
+    - Set to `"true"` if needed (may have security implications)
+    
+    **CONFIG_FILE**
+    
+    Path to YAML configuration file.
+    
+    - Default: `""` (no config file)
+    - Example: `"/etc/datum/config.yaml"`
+  </Tab>
+</Tabs>
+
+## Customizing Configuration
+
+### Via kubectl
+
+Edit the deployment directly:
+
+```bash
+kubectl edit deployment datum-controller-manager -n datum-system
+```
+
+Find the `env` section and modify values:
+
+```yaml
+env:
+  - name: METRICS_BIND_ADDRESS
+    value: ":8080"  # Change from "0"
+  - name: LEADER_ELECTION_LEASE_DURATION
+    value: "30s"    # Change from "15s"
+```
+
+### Via Kustomize
+
+Create a kustomization overlay:
+
+```yaml kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - github.com/datum-cloud/datum/config/default?ref=main
+
+patches:
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: controller-manager
+        namespace: datum-system
+      spec:
+        template:
+          spec:
+            containers:
+              - name: datum-controller-manager
+                env:
+                  - name: LEADER_ELECTION_LEASE_DURATION
+                    value: "30s"
+                  - name: LEADER_ELECTION_RENEW_DEADLINE
+                    value: "20s"
+    target:
+      kind: Deployment
+      name: controller-manager
+```
+
+Apply:
+
+```bash
+kubectl apply -k .
+```
+
+### Via Helm Values (Coming Soon)
+
+```yaml values.yaml
+controllerManager:
+  env:
+    LEADER_ELECTION_LEASE_DURATION: "30s"
+    METRICS_BIND_ADDRESS: ":8080"
+  
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+```
+
+## Resource Limits
+
+Default resource limits from `config/manager/manager.yaml:130`:
+
+```yaml
+resources:
+  limits:
+    cpu: 500m
+    memory: 128Mi
+  requests:
+    cpu: 10m
+    memory: 64Mi
+```
+
+### Adjusting for Scale
+
+<Tabs>
+  <Tab title="Small Deployment">
+    **< 100 resources**
+    
+    ```yaml
+    resources:
+      limits:
+        cpu: 500m
+        memory: 128Mi
+      requests:
+        cpu: 10m
+        memory: 64Mi
+    ```
+  </Tab>
+  
+  <Tab title="Medium Deployment">
+    **100-1000 resources**
+    
+    ```yaml
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+    ```
+  </Tab>
+  
+  <Tab title="Large Deployment">
+    **> 1000 resources**
+    
+    ```yaml
+    resources:
+      limits:
+        cpu: 2000m
+        memory: 1Gi
+      requests:
+        cpu: 500m
+        memory: 512Mi
+    ```
+  </Tab>
+</Tabs>
+
+## Quota Policy Configuration
+
+Quota policies are defined in `config/services/resourcemanager.miloapis.com/quota/`.
+
+### Customizing Project Quotas
+
+**Personal Organization Quota** (`grant-policies/personal-org-grant-policy.yaml:32`):
+
+```yaml
+spec:
+  allowances:
+    - resourceType: resourcemanager.miloapis.com/projects
+      buckets:
+        - amount: 2  # Change to desired limit
+```
+
+**Standard Organization Quota** (`grant-policies/standard-org-grant-policy.yaml:32`):
+
+```yaml
+spec:
+  allowances:
+    - resourceType: resourcemanager.miloapis.com/projects
+      buckets:
+        - amount: 10  # Change to desired limit
+```
+
+**Apply changes:**
+
+```bash
+kubectl apply -k config/services/resourcemanager.miloapis.com/quota
+```
+
+### Adding New Quota Types
+
+Create a `ResourceRegistration`:
+
+```yaml
+apiVersion: quota.miloapis.com/v1alpha1
+kind: ResourceRegistration
+metadata:
+  name: workloads-per-project
+spec:
+  consumerType:
+    apiGroup: resourcemanager.miloapis.com
+    kind: Project
+  
+  type: Entity
+  resourceType: compute.datumapis.com/workloads
+  
+  description: "Maximum number of workloads per project"
+  
+  baseUnit: workload
+  displayUnit: workloads
+  unitConversionFactor: 1
+  
+  claimingResources:
+    - apiGroup: compute.datumapis.com
+      kind: Workload
+```
+
+Create a `GrantCreationPolicy`:
+
+```yaml
+apiVersion: quota.miloapis.com/v1alpha1
+kind: GrantCreationPolicy
+metadata:
+  name: project-workload-quota-policy
+spec:
+  trigger:
+    resource:
+      apiVersion: resourcemanager.miloapis.com/v1alpha1
+      kind: Project
+  target:
+    resourceGrantTemplate:
+      metadata:
+        name: "workload-quota"
+        namespace: "project-{{ trigger.metadata.name }}"
+      spec:
+        consumerRef:
+          apiGroup: resourcemanager.miloapis.com
+          kind: Project
+          name: "{{ trigger.metadata.name }}"
+        allowances:
+          - resourceType: compute.datumapis.com/workloads
+            buckets:
+              - amount: 50
+```
+
+Create a `ClaimCreationPolicy`:
+
+```yaml
+apiVersion: quota.miloapis.com/v1alpha1
+kind: ClaimCreationPolicy
+metadata:
+  name: workload-quota-enforcement
+spec:
+  trigger:
+    resource:
+      apiVersion: compute.datumapis.com/v1alpha1
+      kind: Workload
+  target:
+    resourceClaimTemplate:
+      metadata:
+        name: "workload-{{ trigger.metadata.name }}"
+        namespace: "project-{{ trigger.metadata.namespace }}"
+      spec:
+        consumerRef:
+          apiGroup: resourcemanager.miloapis.com
+          kind: Project
+          name: "{{ trigger.metadata.namespace }}"
+        requests:
+          - resourceType: compute.datumapis.com/workloads
+            amount: 1
+```
+
+## Admission Policies
+
+Validation policies are in `config/services/resourcemanager.miloapis.com/validation/`.
+
+### Customizing Project Name Validation
+
+From `validation/project-name-validation-policy.yaml:1`:
+
+```yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: "validate-project-name"
+spec:
+  validations:
+    # Change minimum length
+    - expression: "size(object.metadata.name) >= 6"  # Change 6 to desired min
+      message: "Project name is too short..."
+    
+    # Change maximum length
+    - expression: "size(object.metadata.name) <= 30"  # Change 30 to desired max
+      message: "Project name is too long..."
+    
+    # Add/remove reserved words
+    - expression: "!object.metadata.name.contains('datum')"
+      message: "Project name contains reserved word..."
+```
+
+## Monitoring Configuration
+
+### Enable Prometheus ServiceMonitor
+
+From `config/prometheus/kustomization.yaml:1`:
+
+```yaml
+resources:
+  - monitor.yaml
+```
+
+Apply:
+
+```bash
+kubectl apply -k config/prometheus
+```
+
+### Metrics Configuration
+
+Metrics are exposed on port 8443 (HTTPS) by default:
+
+```yaml
+ports:
+  - name: https
+    containerPort: 8443
+    protocol: TCP
+```
+
+**Access metrics:**
+
+```bash
+# Port-forward to metrics endpoint
+kubectl port-forward -n datum-system deployment/datum-controller-manager 8443:8443
+
+# Query metrics (requires TLS)
+curl -k https://localhost:8443/metrics
+```
+
+## Security Configuration
+
+### Pod Security Context
+
+From `config/manager/manager.yaml:43`:
+
+```yaml
+securityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+containers:
+  - securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - "ALL"
+```
+
+### Service Account
+
+Datum runs with a dedicated service account:
+
+```bash
+kubectl get serviceaccount controller-manager -n datum-system
+```
+
+RBAC permissions are defined in `config/rbac/`.
+
+## High Availability Configuration
+
+### Multiple Replicas
+
+```bash
+# Scale to 3 replicas
+kubectl scale deployment datum-controller-manager --replicas=3 -n datum-system
+```
+
+Leader election ensures only one active controller:
+
+```bash
+# Check leader
+kubectl get lease -n datum-system
+```
+
+### Resource Requests for HA
+
+```yaml
+resources:
+  requests:
+    cpu: 100m      # Guaranteed CPU
+    memory: 128Mi  # Guaranteed memory
+  limits:
+    cpu: 1000m     # Max CPU
+    memory: 512Mi  # Max memory
+```
+
+## Namespace Configuration
+
+Datum uses the `datum-system` namespace by default (from `config/default/kustomization.yaml:2`):
+
+```yaml
+namespace: datum-system
+```
+
+**Change namespace:**
+
+```yaml kustomization.yaml
+namespace: my-custom-namespace
+
+resources:
+  - github.com/datum-cloud/datum/config/default?ref=main
+```
+
+## Image Configuration
+
+Default image from `config/manager/manager.yaml:108`:
+
+```yaml
+image: ghcr.io/datum-cloud/datum:latest
+```
+
+**Use specific version:**
+
+```bash
+cd config/manager
+kustomize edit set image controller=ghcr.io/datum-cloud/datum:v0.1.0
+```
+
+**Use private registry:**
+
+```bash
+kustomize edit set image controller=my-registry.com/datum:custom
+```
+
+## Logging Configuration
+
+Datum uses structured logging. Configure log level:
+
+```yaml
+env:
+  - name: LOG_LEVEL
+    value: "info"  # debug, info, warn, error
+```
+
+**View logs:**
+
+```bash
+kubectl logs -n datum-system -l control-plane=controller-manager --tail=100 -f
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use version tags" icon="tag">
+    Pin to specific image versions in production, not `latest`.
+  </Card>
+  
+  <Card title="Set resource limits" icon="gauge">
+    Always set requests and limits to prevent resource starvation.
+  </Card>
+  
+  <Card title="Enable metrics" icon="chart-line">
+    Configure Prometheus monitoring for observability.
+  </Card>
+  
+  <Card title="Review RBAC" icon="shield">
+    Audit service account permissions regularly.
+  </Card>
+  
+  <Card title="Use HA" icon="sitemap">
+    Run multiple replicas with leader election in production.
+  </Card>
+  
+  <Card title="Backup etcd" icon="database">
+    Regular backups of Kubernetes etcd for disaster recovery.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Configuration not applied
+
+```bash
+# Verify deployment
+kubectl get deployment datum-controller-manager -n datum-system -o yaml
+
+# Check environment variables
+kubectl get deployment datum-controller-manager -n datum-system -o jsonpath='{.spec.template.spec.containers[0].env}'
+
+# Restart deployment
+kubectl rollout restart deployment datum-controller-manager -n datum-system
+```
+
+### Leader election issues
+
+```bash
+# Check lease
+kubectl get lease -n datum-system
+
+# Check logs for leader election messages
+kubectl logs -n datum-system -l control-plane=controller-manager | grep leader
+```
+
+### Quota policies not working
+
+```bash
+# Verify quota CRDs
+kubectl get crds | grep quota
+
+# Check policies
+kubectl get grantcreationpolicies
+kubectl get claimcreationpolicies
+kubectl get resourceregistrations
+
+# Reapply policies
+kubectl apply -k config/services/resourcemanager.miloapis.com/quota
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Operations" icon="screwdriver-wrench" href="/operations/managing-resources">
+    Learn operational procedures
+  </Card>
+  <Card title="Monitoring" icon="chart-line" href="/operations/monitoring">
+    Set up observability
+  </Card>
+  <Card title="Security" icon="shield" href="/operations/security">
+    Security best practices
+  </Card>
+  <Card title="Quota Management" icon="gauge" href="/operations/quota-management">
+    Advanced quota configuration
+  </Card>
+</CardGroup>

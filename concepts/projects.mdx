@@ -1,0 +1,558 @@
+---
+title: Projects
+description: Isolated workspaces for resources within organizations
+---
+
+# Projects
+
+Projects are isolated workspaces within organizations that contain your infrastructure resources. They provide namespace isolation, RBAC boundaries, and quota management for Networks, Workloads, Gateways, and other resources.
+
+## Overview
+
+Every resource in Datum Cloud belongs to a project. Projects:
+- Provide namespace isolation
+- Have their own RBAC policies
+- Count against organization quotas
+- Can be created, updated, and deleted by authorized users
+
+## Project Hierarchy
+
+```
+Organization
+  └─ Project 1
+      ├─ Networks
+      ├─ Workloads
+      ├─ Gateways
+      └─ Other resources
+  └─ Project 2
+      ├─ Networks
+      ├─ Workloads
+      └─ ...
+```
+
+<Info>
+Projects map to Kubernetes namespaces. Resources within a project are deployed to that project's namespace.
+</Info>
+
+## Personal Projects
+
+When you sign up for Datum Cloud, a **Personal Project** is automatically created in your Personal Organization.
+
+**Characteristics:**
+- Automatically created during user onboarding
+- Named `personal-project-<hash>`
+- Display name: "Personal Project"
+- Cannot be deleted (it's your default workspace)
+
+**Creation from source** (`internal/controller/resourcemanager/personal_organization_controller.go:140`):
+
+```go
+personalProject := &resourcemanagerv1alpha1.Project{
+    ObjectMeta: metav1.ObjectMeta{
+        Name: fmt.Sprintf("personal-project-%s", personalProjectID),
+    },
+}
+
+metav1.SetMetaDataAnnotation(&personalProject.ObjectMeta, 
+    "kubernetes.io/display-name", "Personal Project")
+metav1.SetMetaDataAnnotation(&personalProject.ObjectMeta, 
+    "kubernetes.io/description", 
+    fmt.Sprintf("%s %s's Personal Project", user.Spec.GivenName, user.Spec.FamilyName))
+```
+
+## Creating Projects
+
+### Via kubectl
+
+```yaml
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Project
+metadata:
+  name: production-env
+  annotations:
+    kubernetes.io/display-name: "Production Environment"
+    kubernetes.io/description: "Production workloads and infrastructure"
+spec:
+  ownerRef:
+    name: my-company
+    kind: Organization
+    apiGroup: resourcemanager.miloapis.com
+```
+
+```bash
+kubectl apply -f project.yaml
+```
+
+### Via Datum Cloud Dashboard
+
+<Steps>
+  <Step title="Select organization">
+    Choose the organization where you want to create the project.
+  </Step>
+  
+  <Step title="Navigate to Projects">
+    Click "Projects" in the sidebar.
+  </Step>
+  
+  <Step title="Click Create Project">
+    Click the "+ New Project" button.
+  </Step>
+  
+  <Step title="Fill in details">
+    - Name: URL-friendly identifier (6-30 characters)
+    - Display name: Human-readable name
+    - Description: Optional description
+  </Step>
+  
+  <Step title="Create">
+    Click "Create Project".
+  </Step>
+</Steps>
+
+## Project Naming Rules
+
+Project names must follow strict validation rules enforced by a `ValidatingAdmissionPolicy` at `config/services/resourcemanager.miloapis.com/validation/project-name-validation-policy.yaml:1`:
+
+<Tabs>
+  <Tab title="Length">
+    **Minimum:** 6 characters
+    
+    **Maximum:** 30 characters
+    
+    ```yaml
+    # From validation policy
+    - expression: "size(object.metadata.name) >= 6"
+      message: "Project name is too short. Project names must be at least 6 characters long."
+    
+    - expression: "size(object.metadata.name) <= 30"
+      message: "Project name is too long. Project names must not exceed 30 characters."
+    ```
+  </Tab>
+  
+  <Tab title="Reserved Words">
+    Project names **cannot** contain reserved words:
+    - `datum`
+    
+    ```yaml
+    # From validation policy
+    - expression: "!object.metadata.name.contains('datum')"
+      message: "Project name contains the reserved word 'datum' and cannot be used."
+    ```
+  </Tab>
+  
+  <Tab title="Format">
+    Project names should:
+    - Use lowercase letters
+    - Use hyphens for word separation
+    - Start with a letter
+    - Be URL-friendly
+    
+    **Valid:**
+    - `production-env`
+    - `staging-api`
+    - `dev-team-alpha`
+    
+    **Invalid:**
+    - `prod` (too short)
+    - `datum-project` (reserved word)
+    - `my_project` (underscores not recommended)
+  </Tab>
+</Tabs>
+
+## Project Namespaces
+
+Each project gets a dedicated Kubernetes namespace:
+
+```
+project-<project-name>
+```
+
+For example:
+- Project `production-env` → Namespace `project-production-env`
+- Project `staging-api` → Namespace `project-staging-api`
+
+**All resources belong to the project namespace:**
+
+```bash
+# List all resources in a project
+kubectl get all -n project-production-env
+
+# List networks in project
+kubectl get networks -n project-production-env
+
+# List workloads in project
+kubectl get workloads -n project-production-env
+
+# List gateways in project
+kubectl get gateways -n project-production-env
+```
+
+## Managing Projects
+
+### List Projects
+
+```bash
+# List all projects
+kubectl get projects
+
+# List projects in specific organization
+kubectl get projects -l organization=my-company
+```
+
+```
+NAME                      ORGANIZATION              AGE
+personal-project-abc123   personal-org-abc123       30d
+production-env            my-company                10d
+staging-env               my-company                10d
+dev-environment           my-company                5d
+```
+
+### View Project Details
+
+```bash
+kubectl describe project production-env
+```
+
+### Update Project
+
+```bash
+# Edit interactively
+kubectl edit project production-env
+
+# Or apply updated YAML
+kubectl apply -f project.yaml
+```
+
+### Delete Project
+
+```bash
+kubectl delete project production-env
+```
+
+<Warning>
+**Deleting a project will:**
+- Delete all resources within the project (Networks, Workloads, Gateways, etc.)
+- Delete the project namespace
+- Free up quota in the parent organization
+- **Cannot be undone**
+
+Always verify you're deleting the correct project!
+</Warning>
+
+### Switch Between Projects
+
+When working with kubectl, specify the project namespace:
+
+```bash
+# Set default namespace to project
+kubectl config set-context --current --namespace=project-production-env
+
+# Or use -n flag
+kubectl get workloads -n project-production-env
+```
+
+**Create an alias for convenience:**
+
+```bash
+# Add to ~/.bashrc or ~/.zshrc
+alias kp='kubectl -n project-production-env'
+
+# Now you can use:
+kp get workloads
+kp apply -f workload.yaml
+```
+
+## Project Quota Enforcement
+
+Projects count against organization quotas. When you create a project, a `ResourceClaim` is automatically created.
+
+**From** `config/services/resourcemanager.miloapis.com/quota/claim-policies/claim-creation-policy.yaml:1`:
+
+```yaml
+apiVersion: quota.miloapis.com/v1alpha1
+kind: ClaimCreationPolicy
+metadata:
+  name: project-quota-enforcement-policy
+spec:
+  trigger:
+    resource:
+      apiVersion: resourcemanager.miloapis.com/v1alpha1
+      kind: Project
+  target:
+    resourceClaimTemplate:
+      metadata:
+        name: "project-{{ trigger.metadata.name }}"
+        namespace: "organization-{{ trigger.spec.ownerRef.name }}"
+      spec:
+        consumerRef:
+          apiGroup: "resourcemanager.miloapis.com"
+          kind: "Organization"
+          name: "{{ trigger.spec.ownerRef.name }}"
+        requests:
+          - resourceType: resourcemanager.miloapis.com/projects
+            amount: 1
+```
+
+**How it works:**
+
+<Steps>
+  <Step title="Project created">
+    You create a `Project` resource.
+  </Step>
+  
+  <Step title="Claim created automatically">
+    The ClaimCreationPolicy triggers and creates a `ResourceClaim` requesting 1 project quota.
+  </Step>
+  
+  <Step title="Quota checked">
+    The quota system checks if the organization has available quota.
+  </Step>
+  
+  <Step title="Success or failure">
+    - **If quota available:** Project is created, quota is consumed
+    - **If quota exceeded:** Project creation fails with error
+  </Step>
+</Steps>
+
+### Check Quota Before Creating
+
+```bash
+# View organization quota
+kubectl describe resourcegrant default-project-quota -n organization-my-company
+```
+
+**Example output:**
+
+```yaml
+Status:
+  Allocated:  8  # 8 projects created
+  Available:  2  # 2 more projects can be created
+```
+
+## Project Resource Organization
+
+Organize resources within projects using labels and annotations:
+
+### Example: Multi-Tier Application
+
+```yaml
+# Database network
+apiVersion: networking.datumapis.com/v1alpha1
+kind: Network
+metadata:
+  name: db-network
+  namespace: project-production-env
+  labels:
+    tier: database
+    environment: production
+    app: my-app
+spec:
+  ipv4Blocks:
+    - 10.1.0.0/24
+---
+# Application network
+apiVersion: networking.datumapis.com/v1alpha1
+kind: Network
+metadata:
+  name: app-network
+  namespace: project-production-env
+  labels:
+    tier: application
+    environment: production
+    app: my-app
+spec:
+  ipv4Blocks:
+    - 10.1.1.0/24
+---
+# Database workload
+apiVersion: compute.datumapis.com/v1alpha1
+kind: Workload
+metadata:
+  name: postgres
+  namespace: project-production-env
+  labels:
+    tier: database
+    app: my-app
+spec:
+  replicas: 3
+  template:
+    spec:
+      machineType: n2-standard-4
+      image: postgres:15
+      networkInterfaces:
+        - networkRef:
+            name: db-network
+---
+# Application workload
+apiVersion: compute.datumapis.com/v1alpha1
+kind: Workload
+metadata:
+  name: backend
+  namespace: project-production-env
+  labels:
+    tier: application
+    app: my-app
+spec:
+  replicas: 5
+  template:
+    spec:
+      machineType: e2-medium
+      image: gcr.io/my-project/backend:v1.0
+      networkInterfaces:
+        - networkRef:
+            name: app-network
+```
+
+**Query by labels:**
+
+```bash
+# All resources for my-app
+kubectl get all -n project-production-env -l app=my-app
+
+# Only database tier
+kubectl get workloads -n project-production-env -l tier=database
+
+# All production resources
+kubectl get all -n project-production-env -l environment=production
+```
+
+## Multi-Environment Strategy
+
+Common pattern: Create separate projects for each environment:
+
+```yaml
+# Production project
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Project
+metadata:
+  name: production
+  annotations:
+    kubernetes.io/display-name: "Production"
+  labels:
+    environment: production
+spec:
+  ownerRef:
+    name: my-company
+    kind: Organization
+---
+# Staging project
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Project
+metadata:
+  name: staging
+  annotations:
+    kubernetes.io/display-name: "Staging"
+  labels:
+    environment: staging
+spec:
+  ownerRef:
+    name: my-company
+    kind: Organization
+---
+# Development project
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Project
+metadata:
+  name: development
+  annotations:
+    kubernetes.io/display-name: "Development"
+  labels:
+    environment: development
+spec:
+  ownerRef:
+    name: my-company
+    kind: Organization
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="One environment per project" icon="layer-group">
+    Separate production, staging, and development into distinct projects.
+  </Card>
+  
+  <Card title="Use meaningful names" icon="tag">
+    Choose descriptive project names that indicate purpose.
+  </Card>
+  
+  <Card title="Label everything" icon="tags">
+    Use consistent labels (environment, tier, app, owner) for all resources.
+  </Card>
+  
+  <Card title="Document with annotations" icon="note">
+    Use annotations for descriptions, cost centers, or team contacts.
+  </Card>
+  
+  <Card title="Monitor quota" icon="gauge">
+    Keep track of project count against organization limits.
+  </Card>
+  
+  <Card title="Clean up unused projects" icon="trash">
+    Delete old projects to free quota and reduce clutter.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Cannot create project (quota exceeded)
+
+```bash
+# Check organization quota
+kubectl describe resourcegrant default-project-quota -n organization-my-company
+
+# List existing projects
+kubectl get projects -l organization=my-company
+
+# Delete unused projects
+kubectl delete project old-project
+```
+
+### Project name validation failed
+
+```bash
+# Error: name too short
+The Project "prod" is invalid: metadata.name: Invalid value: "prod": 
+Project name is too short. Project names must be at least 6 characters long.
+
+# Solution: Use longer name
+kubectl apply -f project.yaml  # with name: production-env
+```
+
+```bash
+# Error: reserved word
+The Project "datum-project" is invalid: metadata.name: Invalid value: "datum-project": 
+Project name contains the reserved word 'datum' and cannot be used.
+
+# Solution: Remove reserved word
+kubectl apply -f project.yaml  # with name: my-project
+```
+
+### Resources not visible
+
+```bash
+# Verify you're in the correct namespace
+kubectl config view --minify | grep namespace
+
+# Switch to project namespace
+kubectl config set-context --current --namespace=project-production-env
+
+# Or use -n flag
+kubectl get workloads -n project-production-env
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Organizations" icon="building" href="/concepts/organizations">
+    Learn about organization structure and membership
+  </Card>
+  <Card title="Networks" icon="network-wired" href="/concepts/networks">
+    Create networks within your project
+  </Card>
+  <Card title="Workloads" icon="server" href="/concepts/workloads">
+    Deploy workloads in your project
+  </Card>
+  <Card title="Managing Resources" icon="terminal" href="/operations/managing-resources">
+    kubectl commands for project management
+  </Card>
+</CardGroup>

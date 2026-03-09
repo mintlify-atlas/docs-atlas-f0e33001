@@ -1,0 +1,670 @@
+---
+title: Gateways
+description: Kubernetes Gateway API integration for traffic routing, TLS, and load balancing
+---
+
+# Gateways
+
+Datum Cloud leverages the standard [Kubernetes Gateway API](https://gateway-api.sigs.k8s.io/) to provide powerful, flexible traffic routing for your workloads. The Gateway API is the successor to Ingress and provides a more expressive, extensible way to manage ingress and egress traffic.
+
+## Overview
+
+The Gateway API uses three main resources:
+
+- **GatewayClass**: Defines the type of gateway (provided by Datum)
+- **Gateway**: The actual load balancer instance
+- **Routes**: Routing rules (HTTPRoute, TCPRoute, TLSRoute, etc.)
+
+<Info>
+Datum Cloud fully implements the Kubernetes Gateway API v1 specification, ensuring compatibility with standard tooling and practices.
+</Info>
+
+## GatewayClass
+
+`GatewayClass` resources are provided by Datum and define the gateway implementation.
+
+**Available GatewayClasses:**
+
+```bash
+kubectl get gatewayclasses
+```
+
+```
+NAME              CONTROLLER                      AGE
+datum-gateway     datum.net/gateway-controller    30d
+```
+
+You reference the GatewayClass when creating a Gateway:
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: my-gateway
+spec:
+  gatewayClassName: datum-gateway  # Use Datum's gateway implementation
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+```
+
+## Gateway
+
+A `Gateway` resource represents an instance of a load balancer.
+
+### HTTP Gateway
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: web-gateway
+  annotations:
+    kubernetes.io/description: "Public HTTP gateway for web applications"
+spec:
+  gatewayClassName: datum-gateway
+  
+  listeners:
+    # HTTP listener
+    - name: http
+      protocol: HTTP
+      port: 80
+      
+      # Allow routes from same namespace
+      allowedRoutes:
+        namespaces:
+          from: Same
+```
+
+### HTTPS Gateway with TLS
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: secure-gateway
+spec:
+  gatewayClassName: datum-gateway
+  
+  listeners:
+    # HTTPS listener
+    - name: https
+      protocol: HTTPS
+      port: 443
+      
+      # TLS configuration
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: tls-cert
+      
+      # Hostname
+      hostname: "*.example.com"
+      
+      allowedRoutes:
+        namespaces:
+          from: Same
+    
+    # HTTP redirect to HTTPS
+    - name: http
+      protocol: HTTP
+      port: 80
+```
+
+**Create TLS certificate secret:**
+
+```bash
+kubectl create secret tls tls-cert \
+  --cert=path/to/cert.pem \
+  --key=path/to/key.pem
+```
+
+### Multi-Protocol Gateway
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: multi-protocol-gateway
+spec:
+  gatewayClassName: datum-gateway
+  
+  listeners:
+    # HTTP
+    - name: http
+      protocol: HTTP
+      port: 80
+    
+    # HTTPS
+    - name: https
+      protocol: HTTPS
+      port: 443
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: tls-cert
+    
+    # TCP (for databases, etc.)
+    - name: tcp
+      protocol: TCP
+      port: 5432
+```
+
+## HTTPRoute
+
+`HTTPRoute` defines how HTTP traffic is routed to backend services.
+
+### Basic HTTPRoute
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: web-app-route
+spec:
+  # Attach to gateway
+  parentRefs:
+    - name: web-gateway
+      sectionName: http
+  
+  # Routing rules
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      
+      backendRefs:
+        - name: web-app
+          port: 80
+```
+
+### Advanced HTTPRoute
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api-route
+spec:
+  parentRefs:
+    - name: secure-gateway
+      sectionName: https
+  
+  # Hostname matching
+  hostnames:
+    - api.example.com
+  
+  rules:
+    # API v2 - /api/v2/*
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/v2
+      
+      backendRefs:
+        - name: api-v2
+          port: 8080
+    
+    # API v1 - /api/v1/*
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api/v1
+      
+      backendRefs:
+        - name: api-v1
+          port: 8080
+    
+    # Default - redirect to v2
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /api
+      
+      filters:
+        - type: RequestRedirect
+          requestRedirect:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /api/v2
+```
+
+### Traffic Splitting (Canary Deployments)
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: canary-route
+spec:
+  parentRefs:
+    - name: web-gateway
+  
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      
+      # Split traffic between versions
+      backendRefs:
+        # 90% to stable version
+        - name: web-app-stable
+          port: 80
+          weight: 90
+        
+        # 10% to canary version
+        - name: web-app-canary
+          port: 80
+          weight: 10
+```
+
+### Header-Based Routing
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: header-route
+spec:
+  parentRefs:
+    - name: web-gateway
+  
+  rules:
+    # Route based on custom header
+    - matches:
+        - headers:
+            - type: Exact
+              name: X-Version
+              value: beta
+      
+      backendRefs:
+        - name: web-app-beta
+          port: 80
+    
+    # Default route
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      
+      backendRefs:
+        - name: web-app-stable
+          port: 80
+```
+
+## Request Manipulation
+
+### Request Header Modification
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: header-manipulation
+spec:
+  parentRefs:
+    - name: web-gateway
+  
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      
+      filters:
+        # Add headers
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            add:
+              - name: X-Custom-Header
+                value: datum-cloud
+            set:
+              - name: X-Environment
+                value: production
+            remove:
+              - X-Debug
+      
+      backendRefs:
+        - name: web-app
+          port: 80
+```
+
+### URL Rewriting
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: url-rewrite
+spec:
+  parentRefs:
+    - name: web-gateway
+  
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /old-api
+      
+      filters:
+        # Rewrite /old-api/* to /api/*
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplacePrefixMatch
+              replacePrefixMatch: /api
+      
+      backendRefs:
+        - name: api-service
+          port: 8080
+```
+
+## TLS Configuration
+
+### TLS Termination
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: tls-gateway
+spec:
+  gatewayClassName: datum-gateway
+  
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      
+      # Terminate TLS at gateway
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: tls-cert
+      
+      hostname: "app.example.com"
+```
+
+### TLS Passthrough
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: tls-passthrough-gateway
+spec:
+  gatewayClassName: datum-gateway
+  
+  listeners:
+    - name: tls
+      protocol: TLS
+      port: 443
+      
+      # Pass TLS through to backend
+      tls:
+        mode: Passthrough
+      
+      hostname: "secure.example.com"
+```
+
+### Multiple Certificates (SNI)
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: multi-cert-gateway
+spec:
+  gatewayClassName: datum-gateway
+  
+  listeners:
+    # app.example.com
+    - name: app-https
+      protocol: HTTPS
+      port: 443
+      hostname: "app.example.com"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: app-tls-cert
+    
+    # api.example.com
+    - name: api-https
+      protocol: HTTPS
+      port: 443
+      hostname: "api.example.com"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - name: api-tls-cert
+```
+
+## Managing Gateways
+
+### Create a Gateway
+
+```bash
+kubectl apply -f gateway.yaml
+```
+
+### List Gateways
+
+```bash
+kubectl get gateways
+```
+
+### View Gateway Status
+
+```bash
+kubectl describe gateway web-gateway
+```
+
+**Get Gateway address:**
+
+```bash
+kubectl get gateway web-gateway -o jsonpath='{.status.addresses[0].value}'
+```
+
+### Update a Gateway
+
+```bash
+kubectl edit gateway web-gateway
+# Or
+kubectl apply -f gateway.yaml
+```
+
+### Delete a Gateway
+
+```bash
+kubectl delete gateway web-gateway
+```
+
+<Warning>
+Deleting a gateway will remove the load balancer and make all associated routes unavailable.
+</Warning>
+
+## Managing Routes
+
+### Create an HTTPRoute
+
+```bash
+kubectl apply -f httproute.yaml
+```
+
+### List HTTPRoutes
+
+```bash
+kubectl get httproutes
+```
+
+### View HTTPRoute Details
+
+```bash
+kubectl describe httproute web-app-route
+```
+
+### Update an HTTPRoute
+
+```bash
+kubectl edit httproute web-app-route
+# Or
+kubectl apply -f httproute.yaml
+```
+
+### Delete an HTTPRoute
+
+```bash
+kubectl delete httproute web-app-route
+```
+
+## Troubleshooting
+
+### Gateway not getting an address
+
+```bash
+# Check gateway status
+kubectl describe gateway <gateway-name>
+
+# Look for events
+kubectl get events --field-selector involvedObject.name=<gateway-name>
+
+# Check gateway controller logs
+kubectl logs -n datum-system -l app=gateway-controller
+```
+
+### Routes not working
+
+```bash
+# Verify HTTPRoute is attached to Gateway
+kubectl describe httproute <route-name>
+
+# Check backend service exists
+kubectl get service <backend-service>
+
+# Check allowedRoutes in Gateway
+kubectl get gateway <gateway-name> -o yaml | grep -A 5 allowedRoutes
+```
+
+### TLS certificate issues
+
+```bash
+# Verify secret exists
+kubectl get secret tls-cert
+
+# Check certificate contents
+kubectl get secret tls-cert -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -text -noout
+
+# Verify secret is referenced correctly
+kubectl get gateway <gateway-name> -o yaml | grep -A 5 certificateRefs
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use HTTPS" icon="lock">
+    Always use TLS for production traffic. Terminate at the gateway for easier certificate management.
+  </Card>
+  
+  <Card title="Hostname-based routing" icon="sitemap">
+    Use distinct hostnames for different services (api.example.com, app.example.com).
+  </Card>
+  
+  <Card title="Rate limiting" icon="gauge">
+    Implement rate limiting at the gateway level to protect backends.
+  </Card>
+  
+  <Card title="Health checks" icon="heartbeat">
+    Configure backend health checks to automatically remove unhealthy instances.
+  </Card>
+  
+  <Card title="Monitoring" icon="chart-line">
+    Monitor gateway metrics (requests, latency, errors) with Prometheus.
+  </Card>
+  
+  <Card title="Canary deployments" icon="vial">
+    Use traffic splitting for gradual rollouts.
+  </Card>
+</CardGroup>
+
+## Common Patterns
+
+### Blue-Green Deployment
+
+```yaml
+# Switch traffic instantly by changing backend
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: blue-green-route
+spec:
+  parentRefs:
+    - name: web-gateway
+  rules:
+    - backendRefs:
+        # Switch between blue and green
+        - name: app-green  # Change to app-blue for rollback
+          port: 80
+```
+
+### API Gateway Pattern
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: api-gateway
+spec:
+  parentRefs:
+    - name: api-gateway
+  hostnames:
+    - api.example.com
+  rules:
+    # Users service
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /users
+      backendRefs:
+        - name: users-service
+          port: 8080
+    
+    # Orders service
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /orders
+      backendRefs:
+        - name: orders-service
+          port: 8080
+    
+    # Products service
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /products
+      backendRefs:
+        - name: products-service
+          port: 8080
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Workloads" icon="server" href="/concepts/workloads">
+    Deploy backend services for your gateways
+  </Card>
+  <Card title="Networks" icon="network-wired" href="/concepts/networks">
+    Configure network connectivity
+  </Card>
+  <Card title="Security" icon="shield" href="/operations/security">
+    TLS and security best practices
+  </Card>
+  <Card title="Gateway API Docs" icon="book" href="https://gateway-api.sigs.k8s.io/">
+    Official Kubernetes Gateway API documentation
+  </Card>
+</CardGroup>

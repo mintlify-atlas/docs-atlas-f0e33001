@@ -1,0 +1,645 @@
+---
+title: Monitoring
+description: Prometheus integration, metrics, and observability for Datum Cloud
+---
+
+# Monitoring
+
+Datum Cloud provides comprehensive monitoring through Prometheus integration, exposing metrics for controllers, resources, and operations.
+
+## Overview
+
+Datum exposes metrics in Prometheus format for:
+- Controller health and performance
+- Resource reconciliation
+- API request rates and latency
+- Quota usage
+- Error rates
+
+## Enabling Metrics
+
+### Built-in Metrics Endpoint
+
+Metrics are enabled by default on port 8443 (HTTPS).
+
+From `config/manager/manager.yaml:71`:
+
+```yaml
+env:
+  - name: METRICS_BIND_ADDRESS
+    value: "0"  # Disabled, use METRICS_SECURE instead
+  - name: METRICS_SECURE
+    value: "true"  # HTTPS metrics on port 8443
+```
+
+### Access Metrics Locally
+
+```bash
+# Port-forward to metrics endpoint
+kubectl port-forward -n datum-system deployment/datum-controller-manager 8443:8443
+
+# Query metrics (requires TLS)
+curl -k https://localhost:8443/metrics
+```
+
+### Configure Metrics Service
+
+Metrics service is defined in `config/default/metrics_service.yaml`:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: controller-manager-metrics-service
+  namespace: datum-system
+spec:
+  ports:
+    - name: https
+      port: 8443
+      protocol: TCP
+      targetPort: 8443
+  selector:
+    control-plane: controller-manager
+```
+
+## Prometheus Integration
+
+### Install Prometheus Operator
+
+If not already installed:
+
+```bash
+# Install prometheus-operator
+kubectl apply -f https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/main/bundle.yaml
+```
+
+### Enable ServiceMonitor
+
+Datum includes a ServiceMonitor resource in `config/prometheus/`:
+
+```bash
+kubectl apply -k config/prometheus
+```
+
+**ServiceMonitor definition:**
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: controller-manager-metrics-monitor
+  namespace: datum-system
+spec:
+  endpoints:
+    - path: /metrics
+      port: https
+      scheme: https
+      tlsConfig:
+        insecureSkipVerify: true
+  selector:
+    matchLabels:
+      control-plane: controller-manager
+```
+
+### Verify Prometheus Discovery
+
+```bash
+# Check ServiceMonitor
+kubectl get servicemonitor -n datum-system
+
+# Check if Prometheus found the target
+kubectl port-forward -n monitoring svc/prometheus-k8s 9090:9090
+# Open http://localhost:9090/targets
+# Look for "datum-system/controller-manager-metrics-monitor"
+```
+
+## Available Metrics
+
+### Controller Metrics
+
+<Tabs>
+  <Tab title="Reconciliation">
+    **controller_runtime_reconcile_total**
+    
+    Total number of reconciliations per controller.
+    
+    ```promql
+    # Reconciliation rate
+    rate(controller_runtime_reconcile_total[5m])
+    
+    # By controller
+    sum by (controller) (rate(controller_runtime_reconcile_total[5m]))
+    ```
+    
+    **controller_runtime_reconcile_errors_total**
+    
+    Total number of reconciliation errors.
+    
+    ```promql
+    # Error rate
+    rate(controller_runtime_reconcile_errors_total[5m])
+    
+    # Error ratio
+    rate(controller_runtime_reconcile_errors_total[5m]) / 
+    rate(controller_runtime_reconcile_total[5m])
+    ```
+    
+    **controller_runtime_reconcile_time_seconds**
+    
+    Time spent in reconciliation.
+    
+    ```promql
+    # Average reconciliation time
+    rate(controller_runtime_reconcile_time_seconds_sum[5m]) / 
+    rate(controller_runtime_reconcile_time_seconds_count[5m])
+    
+    # 95th percentile
+    histogram_quantile(0.95, 
+      rate(controller_runtime_reconcile_time_seconds_bucket[5m])
+    )
+    ```
+  </Tab>
+  
+  <Tab title="Work Queue">
+    **workqueue_adds_total**
+    
+    Total number of adds to work queue.
+    
+    ```promql
+    rate(workqueue_adds_total[5m])
+    ```
+    
+    **workqueue_depth**
+    
+    Current depth of work queue.
+    
+    ```promql
+    workqueue_depth
+    ```
+    
+    **workqueue_queue_duration_seconds**
+    
+    Time items spend in queue before processing.
+    
+    ```promql
+    histogram_quantile(0.95, 
+      rate(workqueue_queue_duration_seconds_bucket[5m])
+    )
+    ```
+  </Tab>
+  
+  <Tab title="Go Runtime">
+    **go_goroutines**
+    
+    Number of goroutines.
+    
+    ```promql
+    go_goroutines
+    ```
+    
+    **go_memstats_alloc_bytes**
+    
+    Memory allocated.
+    
+    ```promql
+    go_memstats_alloc_bytes
+    ```
+    
+    **go_memstats_heap_inuse_bytes**
+    
+    Heap memory in use.
+    
+    ```promql
+    go_memstats_heap_inuse_bytes
+    ```
+  </Tab>
+  
+  <Tab title="Leader Election">
+    **leader_election_master_status**
+    
+    Current leader status (1 = leader, 0 = not leader).
+    
+    ```promql
+    leader_election_master_status
+    ```
+  </Tab>
+</Tabs>
+
+## Grafana Dashboards
+
+### Controller Performance Dashboard
+
+```json
+{
+  "dashboard": {
+    "title": "Datum Controller Performance",
+    "panels": [
+      {
+        "title": "Reconciliation Rate",
+        "targets": [
+          {
+            "expr": "sum by (controller) (rate(controller_runtime_reconcile_total[5m]))"
+          }
+        ]
+      },
+      {
+        "title": "Error Rate",
+        "targets": [
+          {
+            "expr": "sum by (controller) (rate(controller_runtime_reconcile_errors_total[5m]))"
+          }
+        ]
+      },
+      {
+        "title": "Reconciliation Duration P95",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum by (controller, le) (rate(controller_runtime_reconcile_time_seconds_bucket[5m])))"
+          }
+        ]
+      },
+      {
+        "title": "Work Queue Depth",
+        "targets": [
+          {
+            "expr": "workqueue_depth"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Resource Status Dashboard
+
+```json
+{
+  "dashboard": {
+    "title": "Datum Resources",
+    "panels": [
+      {
+        "title": "Organizations",
+        "targets": [
+          {
+            "expr": "count(kube_customresource_info{customresource_group='resourcemanager.miloapis.com', customresource_kind='Organization'})"
+          }
+        ]
+      },
+      {
+        "title": "Projects",
+        "targets": [
+          {
+            "expr": "count(kube_customresource_info{customresource_group='resourcemanager.miloapis.com', customresource_kind='Project'})"
+          }
+        ]
+      },
+      {
+        "title": "Workloads",
+        "targets": [
+          {
+            "expr": "count(kube_customresource_info{customresource_group='compute.datumapis.com', customresource_kind='Workload'})"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Import Pre-built Dashboard
+
+Download and import the Datum dashboard:
+
+```bash
+# Coming soon
+curl -Lo datum-dashboard.json https://github.com/datum-cloud/datum/releases/latest/download/grafana-dashboard.json
+```
+
+## Alerting
+
+### Prometheus Alert Rules
+
+Create alert rules for common issues:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: datum-alerts
+  namespace: datum-system
+spec:
+  groups:
+    - name: datum.rules
+      interval: 30s
+      rules:
+        # Controller not reconciling
+        - alert: DatumControllerStalled
+          expr: |
+            rate(controller_runtime_reconcile_total[5m]) == 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Datum controller {{ $labels.controller }} is stalled"
+            description: "No reconciliations in the last 5 minutes."
+        
+        # High error rate
+        - alert: DatumHighErrorRate
+          expr: |
+            (
+              rate(controller_runtime_reconcile_errors_total[5m]) /
+              rate(controller_runtime_reconcile_total[5m])
+            ) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Datum controller {{ $labels.controller }} has high error rate"
+            description: "Error rate is {{ $value | humanizePercentage }}."
+        
+        # Work queue backed up
+        - alert: DatumWorkQueueDepth
+          expr: workqueue_depth > 100
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Datum work queue {{ $labels.name }} is backed up"
+            description: "Queue depth is {{ $value }}."
+        
+        # Controller pod down
+        - alert: DatumControllerDown
+          expr: |
+            absent(up{job="datum-controller-manager-metrics"})
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Datum controller is down"
+            description: "No metrics from Datum controller in the last 5 minutes."
+        
+        # Memory usage high
+        - alert: DatumHighMemoryUsage
+          expr: |
+            go_memstats_alloc_bytes{job="datum-controller-manager-metrics"} > 1e9
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Datum controller memory usage is high"
+            description: "Memory usage is {{ $value | humanize1024 }}."
+```
+
+```bash
+kubectl apply -f datum-alerts.yaml
+```
+
+### Verify Alerts
+
+```bash
+# Check PrometheusRule
+kubectl get prometheusrules -n datum-system
+
+# View in Prometheus UI
+kubectl port-forward -n monitoring svc/prometheus-k8s 9090:9090
+# Open http://localhost:9090/alerts
+```
+
+## Logging
+
+### View Controller Logs
+
+```bash
+# Recent logs
+kubectl logs -n datum-system -l control-plane=controller-manager --tail=100
+
+# Follow logs
+kubectl logs -n datum-system -l control-plane=controller-manager -f
+
+# Since timestamp
+kubectl logs -n datum-system -l control-plane=controller-manager --since=1h
+
+# Specific pod
+kubectl logs -n datum-system datum-controller-manager-xxx-yyy
+```
+
+### Log Aggregation
+
+Integrate with log aggregation systems:
+
+<Tabs>
+  <Tab title="Loki">
+    ```yaml
+    # Promtail configuration
+    scrape_configs:
+      - job_name: datum
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - datum-system
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_label_control_plane]
+            regex: controller-manager
+            action: keep
+    ```
+  </Tab>
+  
+  <Tab title="Elasticsearch">
+    ```yaml
+    # Filebeat configuration
+    filebeat.inputs:
+      - type: container
+        paths:
+          - /var/log/containers/datum-controller-manager-*.log
+        processors:
+          - add_kubernetes_metadata:
+              host: ${NODE_NAME}
+              matchers:
+                - logs_path:
+                    logs_path: "/var/log/containers/"
+    ```
+  </Tab>
+  
+  <Tab title="Datadog">
+    ```yaml
+    # Datadog agent configuration
+    logs:
+      - type: kubernetes
+        source: datum
+        service: controller-manager
+        tags:
+          - env:production
+    ```
+  </Tab>
+</Tabs>
+
+## Health Checks
+
+### Liveness Probe
+
+Controller liveness endpoint:
+
+```bash
+curl http://localhost:8081/healthz
+```
+
+From `config/manager/manager.yaml:116`:
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8081
+  initialDelaySeconds: 15
+  periodSeconds: 20
+```
+
+### Readiness Probe
+
+Controller readiness endpoint:
+
+```bash
+curl http://localhost:8081/readyz
+```
+
+From `config/manager/manager.yaml:121`:
+
+```yaml
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 8081
+  initialDelaySeconds: 5
+  periodSeconds: 10
+```
+
+### Health Check Script
+
+```bash
+#!/bin/bash
+# health-check.sh
+
+set -e
+
+echo "Checking Datum controller health..."
+
+# Check if pod is running
+POD=$(kubectl get pod -n datum-system -l control-plane=controller-manager -o jsonpath='{.items[0].metadata.name}')
+if [ -z "$POD" ]; then
+  echo "ERROR: No controller pod found"
+  exit 1
+fi
+
+STATUS=$(kubectl get pod -n datum-system $POD -o jsonpath='{.status.phase}')
+if [ "$STATUS" != "Running" ]; then
+  echo "ERROR: Controller pod is not running (status: $STATUS)"
+  exit 1
+fi
+
+# Check liveness
+kubectl exec -n datum-system $POD -- wget -q -O- http://localhost:8081/healthz >/dev/null
+if [ $? -ne 0 ]; then
+  echo "ERROR: Liveness check failed"
+  exit 1
+fi
+
+# Check readiness
+kubectl exec -n datum-system $POD -- wget -q -O- http://localhost:8081/readyz >/dev/null
+if [ $? -ne 0 ]; then
+  echo "ERROR: Readiness check failed"
+  exit 1
+fi
+
+echo "✓ Datum controller is healthy"
+```
+
+## Observability Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Enable metrics" icon="chart-line">
+    Always enable Prometheus metrics in production.
+  </Card>
+  
+  <Card title="Set up alerts" icon="bell">
+    Configure alerts for critical issues.
+  </Card>
+  
+  <Card title="Create dashboards" icon="gauge">
+    Build Grafana dashboards for visibility.
+  </Card>
+  
+  <Card title="Aggregate logs" icon="file-lines">
+    Send logs to centralized logging system.
+  </Card>
+  
+  <Card title="Monitor resources" icon="server">
+    Track CPU, memory, and disk usage.
+  </Card>
+  
+  <Card title="Review regularly" icon="magnifying-glass">
+    Regularly review metrics and logs.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+### Metrics not appearing
+
+```bash
+# Check if metrics service exists
+kubectl get svc -n datum-system controller-manager-metrics-service
+
+# Check if metrics endpoint is accessible
+kubectl exec -n datum-system datum-controller-manager-xxx -c datum-controller-manager -- wget -q -O- https://localhost:8443/metrics
+
+# Check ServiceMonitor
+kubectl get servicemonitor -n datum-system
+
+# Check Prometheus logs
+kubectl logs -n monitoring prometheus-k8s-0 -c prometheus
+```
+
+### High memory usage
+
+```bash
+# Check current memory
+kubectl top pod -n datum-system
+
+# Check limits
+kubectl get deployment datum-controller-manager -n datum-system -o jsonpath='{.spec.template.spec.containers[0].resources}'
+
+# Increase limits
+kubectl edit deployment datum-controller-manager -n datum-system
+```
+
+### Controller not reconciling
+
+```bash
+# Check if leader
+kubectl logs -n datum-system -l control-plane=controller-manager | grep leader
+
+# Check work queue
+curl -k https://localhost:8443/metrics | grep workqueue_depth
+
+# Check for errors
+kubectl logs -n datum-system -l control-plane=controller-manager | grep ERROR
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Security" icon="shield" href="/operations/security">
+    Security best practices and RBAC
+  </Card>
+  <Card title="Managing Resources" icon="terminal" href="/operations/managing-resources">
+    Resource management workflows
+  </Card>
+  <Card title="Quota Management" icon="gauge" href="/operations/quota-management">
+    Manage resource quotas
+  </Card>
+  <Card title="Configuration" icon="gear" href="/deployment/configuration">
+    Configure metrics and monitoring
+  </Card>
+</CardGroup>

@@ -1,0 +1,228 @@
+---
+title: datum controller-manager
+description: Run the Datum control plane controller manager
+---
+
+## Overview
+
+The `controller-manager` subcommand runs the Datum control plane controller manager, which extends the Milo control plane with Datum Cloud-specific functionality.
+
+## Usage
+
+```bash
+datum controller-manager [flags]
+```
+
+## Description
+
+The controller-manager watches for Kubernetes resources and reconciles them to maintain the desired state. It currently includes:
+
+- **PersonalOrganizationController**: Automatically creates personal organizations and projects for users
+
+## Flags
+
+### Metrics and Health
+
+<ParamField path="--metrics-bind-address" type="string" default="0">
+  The address the metrics endpoint binds to. Use `:8443` for HTTPS or `:8080` for HTTP, or leave as `0` to disable the metrics service.
+</ParamField>
+
+<ParamField path="--health-probe-bind-address" type="string" default=":8081">
+  The address the probe endpoint binds to.
+</ParamField>
+
+<ParamField path="--metrics-secure" type="boolean" default="true">
+  If set, the metrics endpoint is served securely via HTTPS. Use `--metrics-secure=false` to use HTTP instead.
+</ParamField>
+
+### Leader Election
+
+<ParamField path="--leader-elect" type="boolean" default="false">
+  Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.
+</ParamField>
+
+<ParamField path="--leader-election-id" type="string" default="81afa9db.datumapis.com">
+  The name of the resource that leader election will use for holding the leader lock.
+</ParamField>
+
+<ParamField path="--leader-election-namespace" type="string" default="">
+  The namespace in which the leader election resource will be created. If not specified, it will use the namespace where the controller is running.
+</ParamField>
+
+<ParamField path="--leader-election-lease-duration" type="duration" default="15s">
+  The duration that non-leader candidates will wait to force acquire leadership.
+</ParamField>
+
+<ParamField path="--leader-election-renew-deadline" type="duration" default="10s">
+  The duration that the acting leader will retry refreshing leadership before giving up.
+</ParamField>
+
+<ParamField path="--leader-election-retry-period" type="duration" default="2s">
+  The duration the LeaderElector clients should wait between tries of actions.
+</ParamField>
+
+<ParamField path="--leader-election-release-on-cancel" type="boolean" default="false">
+  If the leader should step down voluntarily when the Manager ends. This requires the binary to immediately end when the Manager is stopped.
+</ParamField>
+
+### Security and Certificates
+
+<ParamField path="--webhook-cert-path" type="string" default="">
+  The directory that contains the webhook certificate.
+</ParamField>
+
+<ParamField path="--webhook-cert-name" type="string" default="tls.crt">
+  The name of the webhook certificate file.
+</ParamField>
+
+<ParamField path="--webhook-cert-key" type="string" default="tls.key">
+  The name of the webhook key file.
+</ParamField>
+
+<ParamField path="--metrics-cert-path" type="string" default="">
+  The directory that contains the metrics server certificate.
+</ParamField>
+
+<ParamField path="--metrics-cert-name" type="string" default="tls.crt">
+  The name of the metrics server certificate file.
+</ParamField>
+
+<ParamField path="--metrics-cert-key" type="string" default="tls.key">
+  The name of the metrics server key file.
+</ParamField>
+
+<ParamField path="--enable-http2" type="boolean" default="false">
+  If set, HTTP/2 will be enabled for the metrics and webhook servers. Disabled by default due to HTTP/2 vulnerabilities (CVE-2023-44487, CVE-2023-39325).
+</ParamField>
+
+### Configuration
+
+<ParamField path="--config" type="string" default="">
+  Path to the controller manager config file. The config file allows you to configure controllers and their behavior.
+</ParamField>
+
+## Configuration File
+
+The controller manager can be configured using a YAML configuration file:
+
+```yaml
+apiVersion: config.datumapis.com/v1alpha1
+kind: DatumControllerManager
+metricsServer:
+  secureServing: true
+  bindAddress: ":8443"
+  tls:
+    certDir: /tmp/k8s-metrics-server/serving-certs
+    certName: tls.crt
+    keyName: tls.key
+personalOrganizationController:
+  roleName: datum-cloud-owner
+  roleNamespace: datum-assignable-organization-roles
+```
+
+### Configuration Fields
+
+<Expandable title="metricsServer">
+  <ResponseField name="secureServing" type="boolean" default="true">
+    Enable serving metrics via HTTPS. Per default metrics will be served via HTTP.
+  </ResponseField>
+
+  <ResponseField name="bindAddress" type="string" default="0">
+    The bind address for the metrics server. Use `:8443` for HTTPS or `:8080` for HTTP. Set to `0` to disable.
+  </ResponseField>
+
+  <ResponseField name="tls" type="object">
+    TLS configuration for the metrics server.
+
+    <Expandable title="tls fields">
+      <ResponseField name="certDir" type="string" default="/tmp/k8s-metrics-server/serving-certs">
+        Directory that contains the server key and certificate.
+      </ResponseField>
+
+      <ResponseField name="certName" type="string" default="tls.crt">
+        Server certificate filename.
+      </ResponseField>
+
+      <ResponseField name="keyName" type="string" default="tls.key">
+        Server key filename.
+      </ResponseField>
+
+      <ResponseField name="secretRef" type="object">
+        Reference to a secret that contains the server key and certificate. If provided, certDir will be ignored.
+      </ResponseField>
+    </Expandable>
+  </ResponseField>
+</Expandable>
+
+<Expandable title="personalOrganizationController">
+  <ResponseField name="roleName" type="string" required>
+    The name of the role to use when assigning owner permissions to the user this organization is being created for.
+  </ResponseField>
+
+  <ResponseField name="roleNamespace" type="string" required>
+    The namespace the owner role exists in that will be assigned to the user the organization is being created for.
+  </ResponseField>
+</Expandable>
+
+## Examples
+
+### Basic usage with metrics enabled
+
+```bash
+datum controller-manager \
+  --metrics-bind-address=:8443 \
+  --health-probe-bind-address=:8081
+```
+
+### Enable leader election for high availability
+
+```bash
+datum controller-manager \
+  --leader-elect \
+  --leader-election-namespace=datum-system
+```
+
+### Use custom certificates
+
+```bash
+datum controller-manager \
+  --metrics-cert-path=/etc/certs/metrics \
+  --metrics-cert-name=server.crt \
+  --metrics-cert-key=server.key
+```
+
+### Load configuration from file
+
+```bash
+datum controller-manager \
+  --config=/etc/datum/controller-config.yaml
+```
+
+### Production deployment example
+
+```bash
+datum controller-manager \
+  --config=/etc/datum/controller-config.yaml \
+  --leader-elect \
+  --metrics-bind-address=:8443 \
+  --health-probe-bind-address=:8081 \
+  --metrics-secure=true \
+  --zap-log-level=info
+```
+
+## Health Checks
+
+The controller manager exposes two health check endpoints:
+
+- `/healthz` - Liveness probe endpoint
+- `/readyz` - Readiness probe endpoint
+
+Both endpoints respond with HTTP 200 when healthy.
+
+## Metrics
+
+When metrics are enabled, Prometheus metrics are exposed at the configured metrics bind address. By default, the metrics endpoint is protected with authentication and authorization using Kubernetes RBAC.
+
+## Source Reference
+
+Source: `cmd/controller/manager.go:50-138`

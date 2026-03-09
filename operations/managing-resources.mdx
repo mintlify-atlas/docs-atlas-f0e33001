@@ -1,0 +1,706 @@
+---
+title: Managing Resources
+description: kubectl commands and workflows for managing Datum Cloud resources
+---
+
+# Managing Resources
+
+This guide covers common operations for managing Datum Cloud resources using `kubectl` and other Kubernetes-native tools.
+
+## Getting Started
+
+Datum resources are managed like any Kubernetes resource using `kubectl`.
+
+### Set Up kubectl Context
+
+```bash
+# View current context
+kubectl config current-context
+
+# Switch context
+kubectl config use-context datum-cloud
+
+# Set default namespace
+kubectl config set-context --current --namespace=project-my-project
+```
+
+### Verify Access
+
+```bash
+# Check permissions
+kubectl auth can-i create workloads
+kubectl auth can-i list organizations
+
+# View your identity
+kubectl auth whoami
+```
+
+## Resource Lifecycle
+
+### Creating Resources
+
+<Tabs>
+  <Tab title="From YAML File">
+    ```bash
+    # Apply a single file
+    kubectl apply -f workload.yaml
+    
+    # Apply all files in directory
+    kubectl apply -f ./manifests/
+    
+    # Apply from URL
+    kubectl apply -f https://example.com/workload.yaml
+    ```
+  </Tab>
+  
+  <Tab title="From Kustomize">
+    ```bash
+    # Apply kustomization
+    kubectl apply -k ./overlays/production/
+    
+    # Preview without applying
+    kubectl kustomize ./overlays/production/
+    ```
+  </Tab>
+  
+  <Tab title="Inline YAML">
+    ```bash
+    cat <<EOF | kubectl apply -f -
+    apiVersion: networking.datumapis.com/v1alpha1
+    kind: Network
+    metadata:
+      name: my-network
+    spec:
+      ipv4Blocks:
+        - 10.0.0.0/16
+    EOF
+    ```
+  </Tab>
+  
+  <Tab title="Imperative">
+    ```bash
+    # Not recommended for Datum resources
+    # Always use declarative YAML for infrastructure
+    ```
+  </Tab>
+</Tabs>
+
+### Viewing Resources
+
+#### List Resources
+
+```bash
+# List all resources of a type
+kubectl get organizations
+kubectl get projects
+kubectl get networks
+kubectl get workloads
+kubectl get gateways
+kubectl get httproutes
+
+# List with labels
+kubectl get workloads -l app=web,tier=frontend
+
+# List across all namespaces
+kubectl get workloads --all-namespaces
+
+# Custom columns
+kubectl get workloads -o custom-columns=NAME:.metadata.name,REPLICAS:.spec.replicas,READY:.status.readyReplicas
+
+# Wide output (more details)
+kubectl get workloads -o wide
+```
+
+#### Describe Resources
+
+```bash
+# Detailed information
+kubectl describe organization my-company
+kubectl describe workload web-app
+kubectl describe network production-network
+
+# Shows:
+# - Metadata
+# - Spec
+# - Status
+# - Events
+# - Conditions
+```
+
+#### Get Resource Details
+
+```bash
+# YAML output
+kubectl get workload web-app -o yaml
+
+# JSON output
+kubectl get workload web-app -o json
+
+# JSONPath queries
+kubectl get workload web-app -o jsonpath='{.status.readyReplicas}'
+
+# Specific field
+kubectl get workload web-app -o jsonpath='{.spec.replicas}'
+```
+
+### Updating Resources
+
+<Tabs>
+  <Tab title="Apply Changes">
+    ```bash
+    # Edit YAML file
+    vi workload.yaml
+    
+    # Apply changes
+    kubectl apply -f workload.yaml
+    
+    # Verify
+    kubectl get workload web-app
+    ```
+  </Tab>
+  
+  <Tab title="Edit Interactively">
+    ```bash
+    # Edit with default editor
+    kubectl edit workload web-app
+    
+    # Edit with specific editor
+    EDITOR=nano kubectl edit workload web-app
+    
+    # Changes apply immediately on save
+    ```
+  </Tab>
+  
+  <Tab title="Patch">
+    ```bash
+    # JSON patch
+    kubectl patch workload web-app --type='json' -p='[{"op": "replace", "path": "/spec/replicas", "value":5}]'
+    
+    # Strategic merge patch
+    kubectl patch workload web-app --type='strategic' -p='{"spec":{"replicas":5}}'
+    
+    # Merge patch
+    kubectl patch workload web-app --type='merge' -p='{"spec":{"replicas":5}}'
+    ```
+  </Tab>
+  
+  <Tab title="Scale">
+    ```bash
+    # Scale workload
+    kubectl scale workload web-app --replicas=10
+    
+    # Verify
+    kubectl get workload web-app
+    ```
+  </Tab>
+</Tabs>
+
+### Deleting Resources
+
+```bash
+# Delete by name
+kubectl delete workload web-app
+
+# Delete from file
+kubectl delete -f workload.yaml
+
+# Delete by label
+kubectl delete workloads -l environment=staging
+
+# Delete all of a type
+kubectl delete workloads --all
+
+# Force delete (skip graceful shutdown)
+kubectl delete workload web-app --force --grace-period=0
+
+# Delete and wait for completion
+kubectl delete workload web-app --wait=true
+```
+
+<Warning>
+Deleting parent resources (Organizations, Projects) will cascade delete all child resources. Always verify before deleting!
+</Warning>
+
+## Working with Organizations
+
+### List Organizations
+
+```bash
+# All organizations
+kubectl get organizations
+
+# Your personal organization
+kubectl get organizations -l type=Personal
+
+# Standard organizations
+kubectl get organizations -l type=Standard
+```
+
+### View Organization Details
+
+```bash
+# Describe
+kubectl describe organization my-company
+
+# Get full YAML
+kubectl get organization my-company -o yaml
+
+# View members
+kubectl get organizationmemberships -n organization-my-company
+
+# View quotas
+kubectl get resourcegrants -n organization-my-company
+```
+
+### Create Organization
+
+```yaml organization.yaml
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Organization
+metadata:
+  name: engineering
+  annotations:
+    kubernetes.io/display-name: "Engineering Team"
+    kubernetes.io/description: "Main engineering organization"
+spec:
+  type: Standard
+```
+
+```bash
+kubectl apply -f organization.yaml
+```
+
+### Manage Organization Members
+
+```bash
+# Add member
+cat <<EOF | kubectl apply -f -
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: OrganizationMembership
+metadata:
+  name: membership-john-doe
+  namespace: organization-engineering
+spec:
+  organizationRef:
+    name: engineering
+  userRef:
+    name: user-john-doe
+  roles:
+    - name: editor
+      namespace: datum-cloud
+EOF
+
+# List members
+kubectl get organizationmemberships -n organization-engineering
+
+# Remove member
+kubectl delete organizationmembership membership-john-doe -n organization-engineering
+```
+
+## Working with Projects
+
+### List Projects
+
+```bash
+# All projects
+kubectl get projects
+
+# Projects in specific organization
+kubectl get projects -l organization=my-company
+
+# Projects with labels
+kubectl get projects -l environment=production
+```
+
+### Create Project
+
+```yaml project.yaml
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Project
+metadata:
+  name: production-env
+  annotations:
+    kubernetes.io/display-name: "Production"
+  labels:
+    environment: production
+spec:
+  ownerRef:
+    name: my-company
+    kind: Organization
+    apiGroup: resourcemanager.miloapis.com
+```
+
+```bash
+kubectl apply -f project.yaml
+```
+
+### Switch Between Projects
+
+```bash
+# Set current namespace to project
+kubectl config set-context --current --namespace=project-production-env
+
+# Or use -n flag
+kubectl get workloads -n project-production-env
+
+# Create alias (add to ~/.bashrc)
+alias kprod='kubectl -n project-production-env'
+alias kstage='kubectl -n project-staging-env'
+```
+
+### Delete Project
+
+```bash
+# Check what will be deleted
+kubectl get all -n project-production-env
+
+# Delete project
+kubectl delete project production-env
+
+# Verify deletion
+kubectl get project production-env
+# Error: not found
+```
+
+## Working with Networks
+
+### Create Network
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: networking.datumapis.com/v1alpha1
+kind: Network
+metadata:
+  name: app-network
+  namespace: project-production-env
+spec:
+  ipv4Blocks:
+    - 10.100.0.0/16
+EOF
+```
+
+### List Networks
+
+```bash
+kubectl get networks -n project-production-env
+```
+
+### View Network Details
+
+```bash
+kubectl describe network app-network -n project-production-env
+```
+
+## Working with Workloads
+
+### Deploy Workload
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: compute.datumapis.com/v1alpha1
+kind: Workload
+metadata:
+  name: web-app
+  namespace: project-production-env
+spec:
+  replicas: 3
+  template:
+    spec:
+      machineType: e2-medium
+      image: nginx:latest
+      networkInterfaces:
+        - networkRef:
+            name: app-network
+EOF
+```
+
+### Scale Workload
+
+```bash
+# Scale up
+kubectl scale workload web-app --replicas=5 -n project-production-env
+
+# Scale down
+kubectl scale workload web-app --replicas=2 -n project-production-env
+```
+
+### Update Workload Image
+
+```bash
+kubectl patch workload web-app -n project-production-env --type='strategic' -p='{"spec":{"template":{"spec":{"image":"nginx:1.25"}}}}'
+```
+
+### View Workload Instances
+
+```bash
+# List instances
+kubectl get instances -n project-production-env
+
+# Filter by workload
+kubectl get instances -l workload=web-app -n project-production-env
+
+# Describe instance
+kubectl describe instance web-app-abc123 -n project-production-env
+```
+
+## Working with Gateways
+
+### Create Gateway
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: web-gateway
+  namespace: project-production-env
+spec:
+  gatewayClassName: datum-gateway
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+EOF
+```
+
+### Create HTTPRoute
+
+```bash
+cat <<EOF | kubectl apply -f -
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: web-app-route
+  namespace: project-production-env
+spec:
+  parentRefs:
+    - name: web-gateway
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: web-app
+          port: 80
+EOF
+```
+
+### Get Gateway Address
+
+```bash
+# Get gateway status
+kubectl get gateway web-gateway -n project-production-env
+
+# Get external address
+kubectl get gateway web-gateway -n project-production-env -o jsonpath='{.status.addresses[0].value}'
+```
+
+## Watching Resources
+
+### Watch for Changes
+
+```bash
+# Watch workloads
+kubectl get workloads -n project-production-env -w
+
+# Watch all resources
+kubectl get all -n project-production-env -w
+
+# Watch events
+kubectl get events -n project-production-env -w
+```
+
+### Wait for Conditions
+
+```bash
+# Wait for workload to be ready
+kubectl wait --for=condition=Ready workload/web-app -n project-production-env --timeout=300s
+
+# Wait for deletion
+kubectl wait --for=delete workload/web-app -n project-production-env --timeout=300s
+```
+
+## Viewing Events and Logs
+
+### View Events
+
+```bash
+# All events in namespace
+kubectl get events -n project-production-env --sort-by='.lastTimestamp'
+
+# Events for specific resource
+kubectl get events --field-selector involvedObject.name=web-app -n project-production-env
+
+# Watch events
+kubectl get events -n project-production-env -w
+```
+
+### View Controller Logs
+
+```bash
+# All logs
+kubectl logs -n datum-system -l control-plane=controller-manager
+
+# Follow logs
+kubectl logs -n datum-system -l control-plane=controller-manager -f
+
+# Last 100 lines
+kubectl logs -n datum-system -l control-plane=controller-manager --tail=100
+
+# Since timestamp
+kubectl logs -n datum-system -l control-plane=controller-manager --since=1h
+```
+
+## Debugging
+
+### Check Resource Status
+
+```bash
+# Quick status check
+kubectl get workload web-app -n project-production-env
+
+# Detailed status
+kubectl describe workload web-app -n project-production-env
+
+# Status field only
+kubectl get workload web-app -n project-production-env -o jsonpath='{.status}'
+```
+
+### Troubleshooting Commands
+
+```bash
+# Check controller health
+kubectl get pods -n datum-system
+kubectl logs -n datum-system -l control-plane=controller-manager --tail=50
+
+# Check CRDs
+kubectl get crds | grep datumapis.com
+
+# Check RBAC
+kubectl auth can-i create workloads -n project-production-env
+kubectl describe rolebinding -n project-production-env
+
+# Check quota
+kubectl get resourcegrants -n organization-my-company
+kubectl get resourceclaims -n organization-my-company
+```
+
+## Bulk Operations
+
+### Apply Multiple Files
+
+```bash
+# All YAML files in directory
+kubectl apply -f ./manifests/
+
+# Recursive
+kubectl apply -f ./manifests/ -R
+
+# Specific files
+kubectl apply -f network.yaml -f workload.yaml -f gateway.yaml
+```
+
+### Delete by Label
+
+```bash
+# Delete all staging workloads
+kubectl delete workloads -l environment=staging -n project-staging-env
+
+# Delete all resources with label
+kubectl delete all -l app=old-app -n project-production-env
+```
+
+### Export Resources
+
+```bash
+# Export as YAML
+kubectl get workload web-app -n project-production-env -o yaml > workload.yaml
+
+# Export all workloads
+kubectl get workloads -n project-production-env -o yaml > all-workloads.yaml
+
+# Export without managed fields
+kubectl get workload web-app -n project-production-env -o yaml --export=true > workload.yaml
+```
+
+## GitOps Workflows
+
+### Structure
+
+```
+infrastructure/
+├── organizations/
+│   └── engineering.yaml
+├── projects/
+│   ├── production.yaml
+│   └── staging.yaml
+├── networks/
+│   ├── production/
+│   │   └── app-network.yaml
+│   └── staging/
+│       └── app-network.yaml
+└── workloads/
+    ├── production/
+    │   └── web-app.yaml
+    └── staging/
+        └── web-app.yaml
+```
+
+### Apply with Dry Run
+
+```bash
+# Client-side dry run
+kubectl apply -f workload.yaml --dry-run=client
+
+# Server-side dry run (validation)
+kubectl apply -f workload.yaml --dry-run=server
+
+# Show diff
+kubectl diff -f workload.yaml
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use declarative YAML" icon="file-code">
+    Always manage infrastructure with version-controlled YAML files.
+  </Card>
+  
+  <Card title="Label everything" icon="tags">
+    Use consistent labels for organization, filtering, and selection.
+  </Card>
+  
+  <Card title="Use namespaces" icon="layer-group">
+    Isolate resources in project namespaces.
+  </Card>
+  
+  <Card title="Version control" icon="code-branch">
+    Store all manifests in Git.
+  </Card>
+  
+  <Card title="Test changes" icon="vial">
+    Use --dry-run before applying changes.
+  </Card>
+  
+  <Card title="Monitor events" icon="bell">
+    Watch events when making changes.
+  </Card>
+</CardGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quota Management" icon="gauge" href="/operations/quota-management">
+    Manage and monitor resource quotas
+  </Card>
+  <Card title="Monitoring" icon="chart-line" href="/operations/monitoring">
+    Set up observability
+  </Card>
+  <Card title="Security" icon="shield" href="/operations/security">
+    RBAC and security best practices
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/networks">
+    Deep dive into resource types
+  </Card>
+</CardGroup>

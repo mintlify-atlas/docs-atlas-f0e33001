@@ -1,0 +1,112 @@
+---
+title: Introduction to Datum Cloud
+description: A Kubernetes-native infrastructure control plane for AI-native builders
+---
+
+# Datum is building the internet for AI
+
+Datum Cloud is a neutral, programmable middle layer where companies can programmatically connect without building the entire stack themselves. It provides a Kubernetes-native infrastructure control plane that enables AI-native builders to orchestrate complex, fragmented clouds, specialty providers, customers, and data.
+
+## Why Datum?
+
+We believe that AI is changing everything — not just how we work and create, but how quickly new applications, agents, and even clouds are being built. Digital leaders today must orchestrate a complex, fragmented web of clouds, specialty providers, customers, and data.
+
+The Internet is built on data center [meet-me rooms](https://en.wikipedia.org/wiki/Meet-me-room), where telco providers and hyperscaler clouds talk to each other over real physical cables, called cross-connects. A new connection takes days or weeks of humans moving things around to set up.
+
+## The Next Era of the Internet
+
+In the [alt-cloud](https://github.com/datum-cloud/awesome-alt-clouds) universe, you don't think about virtual machines and VPCs, you think about **services**. You connect your Vercel app with your Supabase instance all wired up with your Kestra workflow, monitored by your Resolve SRE agent. There isn't a switch or routing table in sight. It's just virtual plumbing to make your business go.
+
+With Datum, cloud and AI-native builders can use the tools they love (like Cursor or a Kubernetes native CLI) to access the internet superpowers that today's tech giants leverage at scale:
+
+- Authoritative DNS
+- Distributed proxies
+- Global backbones
+- Deterministic routing
+- Cloud on-ramps
+- Private interconnection
+
+## Key Features
+
+### Fully Programmable and AI-Native
+
+<CardGroup cols={2}>
+  <Card title="Developer-Friendly" icon="code">
+    Developer- and agent-friendly protocols, interfaces, and workflows
+  </Card>
+  <Card title="Programmatic Interconnection" icon="plug">
+    Programmatic interconnection between providers and services
+  </Card>
+  <Card title="Built-in Security" icon="shield">
+    Network-level encryption that's built-in and impossible to break or disable
+  </Card>
+  <Card title="Kubernetes-Native" icon="dharmachakra">
+    Built using Kubernetes API patterns for operator tooling and familiarity (`kubectl`, Helm, etc.)
+  </Card>
+</CardGroup>
+
+### Neutral by Design
+
+- No allegiance to a single cloud, vendor, or region
+- Operates as a trusted, independent layer for alt clouds, incumbents, and digital-first enterprises
+
+### Bring Your Own Infrastructure
+
+- Use Datum's cloud control plane along with its global network and distributed compute
+- Or run components in your own cloud or infrastructure (e.g., GCP, AWS, NetActuate, Vultr, etc.)
+
+### Maximum Flexibility
+
+- Feed full telemetry to your preferred tools (Grafana Cloud, Honeycomb, Datadog, etc.)
+- Support for policy enforcement via SRv6
+
+## Core Components
+
+<CardGroup cols={2}>
+  <Card title="Workloads" icon="server" href="/concepts/workloads">
+    Provider-agnostic compute instance management with placement rules and scaling
+  </Card>
+  <Card title="Networks" icon="network-wired" href="/concepts/networks">
+    VPC networks, subnets, IPAM, and network policies for secure connectivity
+  </Card>
+  <Card title="Gateways" icon="gateway" href="/concepts/gateways">
+    Standard Kubernetes Gateway API for traffic routing, TLS, and ingress/egress
+  </Card>
+  <Card title="Organizations & Projects" icon="building" href="/concepts/organizations">
+    Hierarchical resource management with quota enforcement
+  </Card>
+</CardGroup>
+
+## Declarative Management
+
+Datum works just like Kubernetes, because it **is** Kubernetes. Define your desired infrastructure state and our components reconcile the living system to match. No more syncing or drift.
+
+The Datum control plane is natively compatible with tooling from the Kubernetes ecosystem. Datum APIs are defined as [Custom Resources](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/), and resources are managed by operators which can be deployed into any Kubernetes cluster.
+
+Use the tools you're familiar with:
+- `kubectl` for interacting with API resources via the CLI
+- `kustomize` or `terraform` for configuration management
+- Any other tool compatible with the Kubernetes API
+
+## Get Started
+
+Ready to begin your journey? Head over to the [Quickstart Guide](/quickstart) to sign up for Datum Cloud and deploy your first workload.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get started in minutes with Datum Cloud
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Learn how Datum works under the hood
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/networks">
+    Understand the key resources and abstractions
+  </Card>
+  <Card title="Join Discord" icon="discord" href="https://link.datum.net/discord">
+    Get help from the Datum community
+  </Card>
+</CardGroup>
+
+## License
+
+Datum is primarily licensed under the [AGPL v3.0](https://www.gnu.org/licenses/agpl-3.0.en.html). Specific components may have different licenses; please check individual repositories for details.

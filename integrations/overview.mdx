@@ -1,0 +1,129 @@
+---
+title: "Infrastructure Providers Overview"
+description: "Learn how Datum's plugin architecture enables integration with cloud providers and infrastructure platforms"
+---
+
+## What are Infrastructure Providers?
+
+Datum uses a plugin-based architecture to integrate with cloud providers and infrastructure platforms. Infrastructure provider plugins interpret Datum resource definitions (like `Workload` and `Network`) and translate them into provider-specific resources such as virtual machines, VPCs, and container instances.
+
+This approach allows you to:
+
+<CardGroup cols={2}>
+  <Card title="Provider Agnostic" icon="cloud">
+    Define your infrastructure once using Datum resources, then deploy across multiple providers without changing your configuration
+  </Card>
+  <Card title="Kubernetes Native" icon="dharmachakra">
+    Leverage familiar Kubernetes patterns and tooling like kubectl, kustomize, and Helm to manage infrastructure
+  </Card>
+  <Card title="Extensible" icon="puzzle-piece">
+    Build custom provider plugins to integrate with any infrastructure platform or internal systems
+  </Card>
+  <Card title="Declarative" icon="file-code">
+    Declare your desired infrastructure state and let Datum operators reconcile the actual state automatically
+  </Card>
+</CardGroup>
+
+## How Provider Plugins Work
+
+Provider plugins are Kubernetes operators that watch for Datum resource changes and reconcile them against the target infrastructure platform.
+
+<Steps>
+  <Step title="Define Resources">
+    You create Datum resources like `Workload` or `Network` using standard Kubernetes manifests or tools like kubectl.
+  </Step>
+  
+  <Step title="Plugin Reconciliation">
+    The provider plugin watches for these resources and interprets them based on placement rules and provider-specific configuration.
+  </Step>
+  
+  <Step title="Infrastructure Provisioning">
+    The plugin creates and manages the actual infrastructure resources (VMs, networks, load balancers) in the target provider.
+  </Step>
+  
+  <Step title="Status Reporting">
+    The plugin updates the Datum resource status to reflect the actual state of the provisioned infrastructure.
+  </Step>
+</Steps>
+
+## Supported Features
+
+Datum provider plugins typically support the following capabilities:
+
+### Compute Management
+
+- **VM-based workloads**: Deploy virtual machine instances with custom OS images from an image library
+- **Container-based workloads**: Deploy sandboxed container instances using any OCI-compliant container image
+- **Placement control**: Define where instances should run across locations and providers
+- **Scaling behavior**: Configure auto-scaling and instance count management
+
+### Network Management
+
+- **VPC connectivity**: Create and manage Virtual Private Cloud (VPC) networks
+- **IPAM**: Automated IP Address Management for subnets and instances
+- **Multi-network attachment**: Attach instances to one or more networks
+- **Network policy**: Apply network security policies and firewall rules
+
+### Storage Management
+
+- **Volume mounts**: Attach persistent volumes to workload instances
+- **Storage classes**: Support for different storage types and performance tiers
+
+## Available Providers
+
+<CardGroup cols={2}>
+  <Card title="Google Cloud Platform (GCP)" icon="google" href="/integrations/gcp">
+    Official GCP provider supporting VM instances, container instances, and VPC networking
+  </Card>
+  <Card title="Custom Providers" icon="code" href="/integrations/custom-providers">
+    Build your own provider plugin for AWS, Azure, or custom infrastructure platforms
+  </Card>
+</CardGroup>
+
+## Architecture
+
+Datum infrastructure providers follow the Kubernetes operator pattern:
+
+```yaml
+apiVersion: workload.datum.net/v1alpha1
+kind: Workload
+metadata:
+  name: my-app
+  namespace: my-project
+spec:
+  template:
+    spec:
+      containers:
+        - name: app
+          image: gcr.io/my-project/my-app:v1.0
+  placement:
+    providers:
+      - gcp
+    regions:
+      - us-central1
+  replicas: 3
+```
+
+The GCP provider plugin watches this `Workload` resource and creates:
+
+1. Google Compute Engine instances or Cloud Run instances
+2. Instance templates with the specified container image
+3. Network interfaces attached to Datum VPC networks
+4. Health checks and auto-scaling configurations
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="GCP Provider" icon="google" href="/integrations/gcp">
+    Deploy workloads and networks on Google Cloud Platform
+  </Card>
+  <Card title="Build Custom Providers" icon="hammer" href="/integrations/custom-providers">
+    Create your own infrastructure provider plugin
+  </Card>
+  <Card title="Workload Concepts" icon="box" href="/concepts/workloads">
+    Learn more about Datum's Workload resource
+  </Card>
+  <Card title="Network Concepts" icon="network-wired" href="/concepts/networks">
+    Understand how Datum manages networks
+  </Card>
+</CardGroup>

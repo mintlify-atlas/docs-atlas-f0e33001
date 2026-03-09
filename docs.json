@@ -1,122 +1,121 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "Datum Cloud",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#0d1d33",
+    "light": "#e2f1a2",
+    "dark": "#849474"
   },
-  "favicon": "/favicon.svg",
+  "favicon": "https://media.brand.dev/ed7a4655-f63f-41ce-ae91-78bd6e43a1dd.png",
+  "logo": {
+    "light": "https://media.brand.dev/593fbd99-3cb5-4b37-a534-d003a8d96e88.svg",
+    "dark": "https://media.brand.dev/593fbd99-3cb5-4b37-a534-d003a8d96e88.svg"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/datum-cloud/datum"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/datum-cloud/datum",
+      "discord": "https://link.datum.net/discord",
+      "linkedin": "https://www.linkedin.com/company/datum-cloud/"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
+              "introduction",
               "quickstart",
-              "development"
+              "architecture"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/networks",
+              "concepts/workloads",
+              "concepts/gateways",
+              "concepts/organizations",
+              "concepts/projects"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Deployment",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "deployment/installation",
+              "deployment/kubernetes-setup",
+              "deployment/configuration"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Operations",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "operations/managing-resources",
+              "operations/quota-management",
+              "operations/monitoring",
+              "operations/security"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "CLI",
             "pages": [
-              "api-reference/introduction"
+              "api/cli/datum",
+              "api/cli/controller"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Controllers",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/controllers/personal-organization",
+              "api/controllers/resource-manager"
+            ]
+          },
+          {
+            "group": "Custom Resources",
+            "pages": [
+              "api/resources/network",
+              "api/resources/workload",
+              "api/resources/gateway",
+              "api/resources/organization",
+              "api/resources/project"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Integrations",
+        "groups": [
+          {
+            "group": "Infrastructure Providers",
+            "pages": [
+              "integrations/overview",
+              "integrations/gcp",
+              "integrations/custom-providers"
+            ]
+          },
+          {
+            "group": "Network Services",
+            "pages": [
+              "integrations/dns",
+              "integrations/gateway-api"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

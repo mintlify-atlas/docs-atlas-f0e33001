@@ -1,0 +1,635 @@
+---
+title: Workloads
+description: Provider-agnostic compute instance management with placement rules and scaling
+---
+
+# Workloads
+
+The `Workload` resource provides a provider-agnostic way to manage groups of compute instances (VMs or containers) across multiple cloud providers and locations.
+
+## Overview
+
+Workloads abstract away provider-specific details, letting you focus on what you want to run rather than how to provision it. Datum's Workload Operator handles placement, provisioning, scaling, and lifecycle management.
+
+**Key Capabilities:**
+- Provider-agnostic instance management
+- Placement rules (where instances should run)
+- Automatic scaling
+- Network attachments
+- Volume mounts
+- Instance templates
+
+## Workload Resource
+
+### Basic Example
+
+```yaml
+apiVersion: compute.datumapis.com/v1alpha1
+kind: Workload
+metadata:
+  name: web-app
+  labels:
+    app: nginx
+    tier: frontend
+spec:
+  # Number of instances
+  replicas: 3
+  
+  # Instance template
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      # Machine type
+      machineType: e2-small
+      
+      # Image to run
+      image: nginx:latest
+      
+      # Network configuration
+      networkInterfaces:
+        - networkRef:
+            name: production-network
+```
+
+### Advanced Example
+
+```yaml
+apiVersion: compute.datumapis.com/v1alpha1
+kind: Workload
+metadata:
+  name: backend-api
+  annotations:
+    kubernetes.io/description: "Backend API service"
+spec:
+  replicas: 5
+  
+  # Placement rules - where instances should run
+  placement:
+    # Prefer multiple zones for HA
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+    
+    # Region constraints
+    nodeSelector:
+      topology.kubernetes.io/region: us-central1
+    
+    # Provider preferences
+    affinity:
+      nodeAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+                - key: provider
+                  operator: In
+                  values:
+                    - gcp
+  
+  # Instance template
+  template:
+    metadata:
+      labels:
+        app: backend
+        version: v2.1
+    spec:
+      machineType: n2-standard-4
+      
+      # Container or VM image
+      image: gcr.io/my-project/backend-api:v2.1
+      
+      # Environment variables
+      env:
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: db-credentials
+              key: url
+        - name: LOG_LEVEL
+          value: info
+      
+      # Network interfaces
+      networkInterfaces:
+        - networkRef:
+            name: backend-network
+          subnetRef:
+            name: backend-subnet
+        - networkRef:
+            name: data-network
+      
+      # Persistent volumes
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: backend-data
+      
+      volumeMounts:
+        - name: data
+          mountPath: /var/lib/app/data
+      
+      # Startup command
+      command:
+        - /app/backend
+        - --config=/etc/backend/config.yaml
+      
+      # Resource requests and limits
+      resources:
+        requests:
+          cpu: "2"
+          memory: 4Gi
+        limits:
+          cpu: "4"
+          memory: 8Gi
+```
+
+## Instance Templates
+
+The `template` field defines the specification for each instance:
+
+### Machine Types
+
+```yaml
+spec:
+  template:
+    spec:
+      # GCP-style machine types
+      machineType: e2-micro       # 2 vCPUs, 1 GB RAM
+      # machineType: e2-small     # 2 vCPUs, 2 GB RAM
+      # machineType: e2-medium    # 2 vCPUs, 4 GB RAM
+      # machineType: n2-standard-4 # 4 vCPUs, 16 GB RAM
+      # machineType: c2-standard-8 # 8 vCPUs, 32 GB RAM
+```
+
+<Info>
+Machine type names follow GCP conventions but work across providers. The Workload Operator translates them to provider-specific equivalents.
+</Info>
+
+### Image Types
+
+Support for VM images and container images:
+
+<Tabs>
+  <Tab title="Container Image">
+    ```yaml
+    spec:
+      template:
+        spec:
+          image: nginx:latest
+          # Or from a private registry
+          # image: gcr.io/my-project/app:v1.0
+          
+          # Image pull credentials
+          imagePullSecrets:
+            - name: gcr-credentials
+    ```
+    
+    Uses gVisor sandboxing for secure container execution.
+  </Tab>
+  
+  <Tab title="VM Image">
+    ```yaml
+    spec:
+      template:
+        spec:
+          # OS image from provider image library
+          image: projects/debian-cloud/global/images/debian-11-bullseye-v20230912
+          
+          # Or custom image
+          # image: projects/my-project/global/images/my-custom-image
+    ```
+    
+    Provisions full virtual machines.
+  </Tab>
+</Tabs>
+
+## Placement Rules
+
+Control where instances are deployed using placement constraints:
+
+### Topology Spread
+
+Distribute instances across zones or regions:
+
+```yaml
+spec:
+  placement:
+    topologySpreadConstraints:
+      # Spread across zones
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: web-app
+      
+      # Spread across providers
+      - maxSkew: 2
+        topologyKey: provider
+        whenUnsatisfiable: ScheduleAnyway
+```
+
+### Node Selector
+
+Require specific location or provider:
+
+```yaml
+spec:
+  placement:
+    nodeSelector:
+      topology.kubernetes.io/region: us-central1
+      topology.kubernetes.io/zone: us-central1-a
+      provider: gcp
+```
+
+### Affinity and Anti-Affinity
+
+```yaml
+spec:
+  placement:
+    affinity:
+      # Prefer certain providers
+      nodeAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+                - key: provider
+                  operator: In
+                  values:
+                    - gcp
+                    - aws
+      
+      # Co-locate with other workloads
+      podAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: database
+            topologyKey: topology.kubernetes.io/zone
+      
+      # Keep away from other workloads
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app: web-app
+              topologyKey: kubernetes.io/hostname
+```
+
+## Scaling
+
+### Manual Scaling
+
+Change the replica count:
+
+```bash
+kubectl scale workload web-app --replicas=10
+```
+
+Or edit the resource:
+
+```bash
+kubectl edit workload web-app
+```
+
+### Declarative Scaling
+
+Update your YAML and reapply:
+
+```yaml
+spec:
+  replicas: 10  # Scaled from 3 to 10
+```
+
+```bash
+kubectl apply -f workload.yaml
+```
+
+<Info>
+Automatic scaling via HPA (Horizontal Pod Autoscaler) is coming soon. Track progress in the [enhancements repo](https://link.datum.net/enhancements).
+</Info>
+
+## Network Configuration
+
+Attach instances to one or more networks:
+
+### Single Network
+
+```yaml
+spec:
+  template:
+    spec:
+      networkInterfaces:
+        - networkRef:
+            name: production-network
+```
+
+### Multiple Networks
+
+```yaml
+spec:
+  template:
+    spec:
+      networkInterfaces:
+        # Primary network (internet access)
+        - networkRef:
+            name: public-network
+          primary: true
+        
+        # Backend network
+        - networkRef:
+            name: backend-network
+          subnetRef:
+            name: backend-subnet
+        
+        # Data network
+        - networkRef:
+            name: data-network
+```
+
+### Static IP Assignment
+
+```yaml
+spec:
+  template:
+    spec:
+      networkInterfaces:
+        - networkRef:
+            name: production-network
+          ipAddress: 10.0.1.100  # Static IP
+```
+
+## Storage Volumes
+
+### Persistent Volumes
+
+```yaml
+spec:
+  template:
+    spec:
+      volumes:
+        - name: app-data
+          persistentVolumeClaim:
+            claimName: app-data-pvc
+        
+        - name: config
+          configMap:
+            name: app-config
+        
+        - name: secrets
+          secret:
+            secretName: app-secrets
+      
+      volumeMounts:
+        - name: app-data
+          mountPath: /var/lib/app
+        - name: config
+          mountPath: /etc/app/config
+          readOnly: true
+        - name: secrets
+          mountPath: /etc/app/secrets
+          readOnly: true
+```
+
+## Workload Lifecycle
+
+### How Workloads are Deployed
+
+<Steps>
+  <Step title="User creates Workload">
+    ```bash
+    kubectl apply -f workload.yaml
+    ```
+  </Step>
+  
+  <Step title="Workload Operator reconciles">
+    - Evaluates placement rules
+    - Determines target locations (zones, providers)
+    - Creates `WorkloadDeployment` for each location
+  </Step>
+  
+  <Step title="WorkloadDeployment creates Instances">
+    - Generates `Instance` resources from template
+    - Applies replica count per location
+  </Step>
+  
+  <Step title="Infrastructure Plugin provisions">
+    - Watches for `Instance` resources
+    - Creates VMs or containers in target provider
+    - Attaches to networks
+    - Mounts volumes
+  </Step>
+  
+  <Step title="Status updates">
+    - Plugin updates `Instance` status to `Running`
+    - Workload status becomes `Ready`
+  </Step>
+</Steps>
+
+### Workload Status
+
+```bash
+kubectl get workload web-app
+```
+
+```
+NAME      REPLICAS   READY   AGE
+web-app   3          3       5m
+```
+
+**View detailed status:**
+
+```bash
+kubectl describe workload web-app
+```
+
+## Managing Workloads
+
+### Create a Workload
+
+```bash
+kubectl apply -f workload.yaml
+```
+
+### List Workloads
+
+```bash
+kubectl get workloads
+```
+
+### View Workload Details
+
+```bash
+kubectl describe workload web-app
+```
+
+### Update a Workload
+
+```bash
+kubectl edit workload web-app
+# Or
+kubectl apply -f workload.yaml
+```
+
+### Scale a Workload
+
+```bash
+kubectl scale workload web-app --replicas=5
+```
+
+### Delete a Workload
+
+```bash
+kubectl delete workload web-app
+```
+
+<Warning>
+Deleting a workload will terminate all instances. Data in non-persistent volumes will be lost.
+</Warning>
+
+### View Instances
+
+```bash
+# List all instances
+kubectl get instances
+
+# Filter by workload
+kubectl get instances -l workload=web-app
+
+# Detailed instance info
+kubectl describe instance web-app-us-central1-a-0
+```
+
+## Troubleshooting
+
+### Workload not becoming Ready
+
+```bash
+# Check workload status
+kubectl describe workload <workload-name>
+
+# Check events
+kubectl get events --field-selector involvedObject.name=<workload-name>
+
+# Check Workload Operator logs
+kubectl logs -n datum-system -l app=workload-operator
+```
+
+### Instances not starting
+
+```bash
+# List instances
+kubectl get instances
+
+# Check specific instance
+kubectl describe instance <instance-name>
+
+# Check infrastructure plugin logs
+kubectl logs -n datum-system -l app=infra-provider-gcp
+```
+
+### Placement constraints not satisfied
+
+```bash
+# View placement events
+kubectl describe workload <workload-name> | grep -A 20 Events
+
+# Check available capacity
+kubectl describe nodes
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Use labels" icon="tags">
+    Label workloads for organization and selection (app, tier, version, environment).
+  </Card>
+  
+  <Card title="Spread for HA" icon="sitemap">
+    Use topology spread constraints to distribute across zones.
+  </Card>
+  
+  <Card title="Resource limits" icon="gauge">
+    Set resource requests and limits to ensure predictable performance.
+  </Card>
+  
+  <Card title="Health checks" icon="heartbeat">
+    Configure liveness and readiness probes (coming soon).
+  </Card>
+  
+  <Card title="Rolling updates" icon="rotate">
+    Use rolling update strategy for zero-downtime deployments.
+  </Card>
+  
+  <Card title="Persistent data" icon="database">
+    Use persistent volumes for data that must survive instance restarts.
+  </Card>
+</CardGroup>
+
+## Common Patterns
+
+### Web Application Tier
+
+```yaml
+apiVersion: compute.datumapis.com/v1alpha1
+kind: Workload
+metadata:
+  name: web-frontend
+spec:
+  replicas: 5
+  placement:
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: DoNotSchedule
+  template:
+    spec:
+      machineType: e2-medium
+      image: nginx:alpine
+      networkInterfaces:
+        - networkRef:
+            name: public-network
+```
+
+### Background Worker
+
+```yaml
+apiVersion: compute.datumapis.com/v1alpha1
+kind: Workload
+metadata:
+  name: worker
+spec:
+  replicas: 3
+  template:
+    spec:
+      machineType: n2-standard-2
+      image: gcr.io/my-project/worker:latest
+      env:
+        - name: QUEUE_URL
+          value: redis://redis-service:6379
+      networkInterfaces:
+        - networkRef:
+            name: backend-network
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Gateways" icon="gateway" href="/concepts/gateways">
+    Expose workloads with the Gateway API
+  </Card>
+  <Card title="Networks" icon="network-wired" href="/concepts/networks">
+    Configure networking for workloads
+  </Card>
+  <Card title="Managing Resources" icon="terminal" href="/operations/managing-resources">
+    Learn kubectl commands for workloads
+  </Card>
+  <Card title="Workload Operator" icon="github" href="https://github.com/datum-cloud/workload-operator">
+    Explore the source code
+  </Card>
+</CardGroup>

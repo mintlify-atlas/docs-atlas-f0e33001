@@ -1,0 +1,342 @@
+---
+title: "Google Cloud Platform (GCP) Provider"
+description: "Deploy VM and container workloads on Google Cloud Platform with VPC networking"
+---
+
+## Overview
+
+The [GCP infrastructure provider](https://github.com/datum-cloud/infra-provider-gcp) enables you to deploy and manage compute workloads and networking resources on Google Cloud Platform using Datum's declarative Kubernetes API.
+
+<Info>
+The GCP provider is Datum's first official infrastructure provider plugin, demonstrating the full capabilities of the provider plugin architecture.
+</Info>
+
+## Supported Features
+
+The GCP provider supports the following Datum resources and capabilities:
+
+<CardGroup cols={2}>
+  <Card title="VM Instances" icon="desktop">
+    Deploy Virtual Machine-based workload instances using OS images from an image library
+  </Card>
+  <Card title="Container Instances" icon="docker">
+    Deploy sandboxed container-based workload instances with any OCI-compliant container image
+  </Card>
+  <Card title="VPC Networks" icon="network-wired">
+    Create and manage Google Cloud VPC networks with automated IPAM
+  </Card>
+  <Card title="Multi-Network Attachment" icon="plug">
+    Attach workload instances to one or more VPC networks
+  </Card>
+</CardGroup>
+
+## Installation
+
+<Steps>
+  <Step title="Configure GCP credentials">
+    Create a Google Cloud service account with the necessary permissions and download the JSON key file.
+
+    ```bash
+    gcloud iam service-accounts create datum-provider \
+      --display-name="Datum GCP Provider"
+
+    gcloud projects add-iam-policy-binding PROJECT_ID \
+      --member="serviceAccount:datum-provider@PROJECT_ID.iam.gserviceaccount.com" \
+      --role="roles/compute.admin"
+
+    gcloud iam service-accounts keys create key.json \
+      --iam-account=datum-provider@PROJECT_ID.iam.gserviceaccount.com
+    ```
+  </Step>
+
+  <Step title="Create Kubernetes secret">
+    Store the GCP credentials as a Kubernetes secret in your Datum control plane cluster.
+
+    ```bash
+    kubectl create secret generic gcp-credentials \
+      --from-file=key.json=./key.json \
+      --namespace=datum-system
+    ```
+  </Step>
+
+  <Step title="Install the GCP provider">
+    Deploy the GCP provider operator to your Datum control plane cluster.
+
+    ```bash
+    kubectl apply -f https://github.com/datum-cloud/infra-provider-gcp/releases/latest/download/install.yaml
+    ```
+  </Step>
+
+  <Step title="Configure provider credentials">
+    Create a `ProviderConfig` resource referencing your GCP credentials.
+
+    ```yaml
+    apiVersion: gcp.datum.net/v1alpha1
+    kind: ProviderConfig
+    metadata:
+      name: default
+    spec:
+      projectID: your-gcp-project-id
+      credentials:
+        source: Secret
+        secretRef:
+          name: gcp-credentials
+          namespace: datum-system
+          key: key.json
+    ```
+  </Step>
+</Steps>
+
+## Deploying VM-based Workloads
+
+Deploy virtual machine instances using Datum's `Workload` resource:
+
+```yaml
+apiVersion: workload.datum.net/v1alpha1
+kind: Workload
+metadata:
+  name: web-servers
+  namespace: my-project
+spec:
+  template:
+    spec:
+      # Use VM instances with a specific OS image
+      instanceType: vm
+      image: projects/debian-cloud/global/images/debian-11-bullseye-v20240110
+      machineType: e2-medium
+      
+      # Network configuration
+      networks:
+        - name: my-vpc
+  
+  # Placement and scaling
+  placement:
+    providers:
+      - name: gcp
+        config:
+          projectID: my-gcp-project
+    regions:
+      - us-central1
+      - us-east1
+  
+  replicas: 3
+```
+
+This creates 3 Google Compute Engine VM instances distributed across the specified regions.
+
+## Deploying Container-based Workloads
+
+Deploy containerized applications using OCI-compliant container images:
+
+```yaml
+apiVersion: workload.datum.net/v1alpha1
+kind: Workload
+metadata:
+  name: api-service
+  namespace: my-project
+spec:
+  template:
+    spec:
+      # Use sandboxed container instances
+      containers:
+        - name: api
+          image: gcr.io/my-project/api-service:v2.1.0
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          env:
+            - name: DATABASE_URL
+              value: postgresql://db.example.com/mydb
+      
+      # Network configuration
+      networks:
+        - name: my-vpc
+  
+  placement:
+    providers:
+      - name: gcp
+    regions:
+      - us-central1
+  
+  replicas: 5
+```
+
+<Note>
+Container-based workloads on GCP use sandboxed container runtime for enhanced security and isolation.
+</Note>
+
+## VPC Network Management
+
+Create and manage Google Cloud VPC networks with Datum's `Network` resource:
+
+```yaml
+apiVersion: network.datum.net/v1alpha1
+kind: Network
+metadata:
+  name: my-vpc
+  namespace: my-project
+spec:
+  provider: gcp
+  
+  # VPC configuration
+  cidr: 10.0.0.0/16
+  
+  subnets:
+    - name: subnet-us-central1
+      cidr: 10.0.1.0/24
+      region: us-central1
+    
+    - name: subnet-us-east1
+      cidr: 10.0.2.0/24
+      region: us-east1
+  
+  # IPAM is automatically managed
+  ipam:
+    enabled: true
+```
+
+The GCP provider creates:
+- A Google Cloud VPC network
+- Subnet resources in the specified regions
+- Automatic IP address allocation for workload instances
+
+## Multi-Network Attachment
+
+Attach workload instances to multiple VPC networks:
+
+```yaml
+apiVersion: workload.datum.net/v1alpha1
+kind: Workload
+metadata:
+  name: database-cluster
+  namespace: my-project
+spec:
+  template:
+    spec:
+      instanceType: vm
+      image: projects/debian-cloud/global/images/debian-11-bullseye-v20240110
+      machineType: n2-standard-4
+      
+      # Attach to multiple networks
+      networks:
+        - name: backend-vpc      # Private backend network
+        - name: management-vpc   # Management/admin network
+  
+  placement:
+    providers:
+      - name: gcp
+    regions:
+      - us-central1
+  
+  replicas: 3
+```
+
+Each instance gets network interfaces in both VPC networks with automatically assigned IP addresses.
+
+## Configuration Reference
+
+### Provider Configuration
+
+| Field | Description | Required |
+|-------|-------------|----------|
+| `projectID` | GCP project ID where resources will be created | Yes |
+| `credentials` | Reference to GCP service account credentials | Yes |
+| `region` | Default region for resources (can be overridden per workload) | No |
+
+### Workload VM Options
+
+| Field | Description | Default |
+|-------|-------------|--------|
+| `instanceType` | Set to `vm` for VM-based instances | - |
+| `image` | GCP VM image (project/image format) | - |
+| `machineType` | GCP machine type (e.g., `e2-medium`, `n2-standard-4`) | `e2-medium` |
+| `diskSize` | Boot disk size in GB | `10` |
+| `diskType` | Disk type (`pd-standard`, `pd-ssd`, `pd-balanced`) | `pd-standard` |
+
+### Workload Container Options
+
+| Field | Description |
+|-------|-------------|
+| `containers` | List of container specifications |
+| `containers[].name` | Container name |
+| `containers[].image` | OCI container image reference |
+| `containers[].ports` | List of exposed ports |
+| `containers[].env` | Environment variables |
+
+## Monitoring and Status
+
+Check the status of your GCP-backed workloads:
+
+```bash
+# View workload status
+kubectl get workload web-servers -n my-project -o yaml
+
+# Check individual instances
+kubectl get instances -n my-project -l workload=web-servers
+
+# View provider-specific details
+kubectl describe workloaddeployment web-servers-gcp -n my-project
+```
+
+The status shows:
+- Provisioned GCP instance IDs
+- Assigned IP addresses
+- Instance health and readiness
+- Any provisioning errors
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Instances fail to provision">
+    Check the GCP provider logs:
+    
+    ```bash
+    kubectl logs -n datum-system -l app=gcp-provider
+    ```
+    
+    Common issues:
+    - Insufficient GCP quotas for the machine type or region
+    - Invalid service account permissions
+    - Network configuration conflicts
+  </Accordion>
+
+  <Accordion title="Network attachment errors">
+    Ensure the `Network` resource exists and is in a ready state:
+    
+    ```bash
+    kubectl get network my-vpc -n my-project
+    ```
+    
+    The network must be successfully created in GCP before workloads can reference it.
+  </Accordion>
+
+  <Accordion title="Authentication failures">
+    Verify the GCP credentials secret is correctly configured:
+    
+    ```bash
+    kubectl get secret gcp-credentials -n datum-system
+    kubectl describe providerconfig default
+    ```
+    
+    Ensure the service account has the required IAM roles:
+    - `roles/compute.admin`
+    - `roles/compute.networkAdmin` (for VPC management)
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Workload Concepts" icon="box" href="/concepts/workloads">
+    Learn more about Datum's Workload resource and placement rules
+  </Card>
+  <Card title="Network Concepts" icon="network-wired" href="/concepts/networks">
+    Understand Datum's network management capabilities
+  </Card>
+  <Card title="Gateway Integration" icon="door-open" href="/integrations/gateway-api">
+    Expose your workloads with Kubernetes Gateway API
+  </Card>
+  <Card title="Custom Providers" icon="code" href="/integrations/custom-providers">
+    Build your own infrastructure provider plugin
+  </Card>
+</CardGroup>

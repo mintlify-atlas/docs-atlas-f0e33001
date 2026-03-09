@@ -1,0 +1,521 @@
+---
+title: "DNS Service Integration"
+description: "Manage authoritative DNS zones and record sets with Datum's DNS service"
+---
+
+## Overview
+
+Datum provides authoritative DNS management through the `dns.networking.miloapis.com` service. This allows you to create and manage DNS zones and record sets declaratively using Kubernetes resources.
+
+<Info>
+Datum's DNS service provides globally distributed authoritative DNS with built-in quota management and project-level isolation.
+</Info>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Authoritative DNS" icon="globe">
+    Host DNS zones with global distribution and high availability
+  </Card>
+  <Card title="Declarative Management" icon="file-code">
+    Define DNS zones and records as Kubernetes custom resources
+  </Card>
+  <Card title="Quota Management" icon="gauge">
+    Built-in resource quotas per project for zones and record sets
+  </Card>
+  <Card title="Project Isolation" icon="shield">
+    DNS resources are scoped to projects with automatic quota allocation
+  </Card>
+</CardGroup>
+
+## DNS Resources
+
+The DNS service provides two main custom resources:
+
+### DNSZone
+
+Represents an authoritative DNS zone:
+
+```yaml
+apiVersion: dns.networking.miloapis.com/v1alpha1
+kind: DNSZone
+metadata:
+  name: example-com
+  namespace: my-project
+spec:
+  # DNS zone name
+  dnsName: example.com.
+  
+  # Optional description
+  description: "Main DNS zone for example.com"
+```
+
+### DNSRecordSet
+
+Represents a set of DNS records within a zone:
+
+```yaml
+apiVersion: dns.networking.miloapis.com/v1alpha1
+kind: DNSRecordSet
+metadata:
+  name: www-example-com
+  namespace: my-project
+spec:
+  # Reference to the DNS zone
+  zoneRef:
+    name: example-com
+  
+  # DNS record name (relative to zone)
+  name: www.example.com.
+  
+  # Record type
+  type: A
+  
+  # TTL in seconds
+  ttl: 300
+  
+  # Record data
+  rrdatas:
+    - "203.0.113.1"
+    - "203.0.113.2"
+```
+
+## Getting Started
+
+<Steps>
+  <Step title="Create a DNS zone">
+    Define a DNS zone for your domain:
+
+    ```yaml
+    apiVersion: dns.networking.miloapis.com/v1alpha1
+    kind: DNSZone
+    metadata:
+      name: myapp-com
+      namespace: my-project
+    spec:
+      dnsName: myapp.com.
+      description: "Production DNS zone"
+    ```
+
+    Apply the zone:
+
+    ```bash
+    kubectl apply -f dnszone.yaml
+    ```
+  </Step>
+
+  <Step title="Add DNS records">
+    Create DNS record sets for your zone:
+
+    ```yaml
+    apiVersion: dns.networking.miloapis.com/v1alpha1
+    kind: DNSRecordSet
+    metadata:
+      name: api-myapp-com
+      namespace: my-project
+    spec:
+      zoneRef:
+        name: myapp-com
+      name: api.myapp.com.
+      type: A
+      ttl: 300
+      rrdatas:
+        - "198.51.100.10"
+    ```
+
+    Apply the record set:
+
+    ```bash
+    kubectl apply -f recordset.yaml
+    ```
+  </Step>
+
+  <Step title="Verify DNS propagation">
+    Check that your DNS records are live:
+
+    ```bash
+    # Query Datum's authoritative DNS servers
+    dig @ns1.datum.net myapp.com
+    dig @ns1.datum.net api.myapp.com
+    ```
+  </Step>
+
+  <Step title="Update nameservers">
+    Update your domain registrar to point to Datum's nameservers:
+
+    ```
+    ns1.datum.net
+    ns2.datum.net
+    ns3.datum.net
+    ns4.datum.net
+    ```
+  </Step>
+</Steps>
+
+## Record Types
+
+Datum DNS supports standard DNS record types:
+
+### A Records
+
+Map domain names to IPv4 addresses:
+
+```yaml
+apiVersion: dns.networking.miloapis.com/v1alpha1
+kind: DNSRecordSet
+metadata:
+  name: web-server
+  namespace: my-project
+spec:
+  zoneRef:
+    name: myapp-com
+  name: web.myapp.com.
+  type: A
+  ttl: 300
+  rrdatas:
+    - "203.0.113.10"
+```
+
+### AAAA Records
+
+Map domain names to IPv6 addresses:
+
+```yaml
+apiVersion: dns.networking.miloapis.com/v1alpha1
+kind: DNSRecordSet
+metadata:
+  name: web-server-ipv6
+  namespace: my-project
+spec:
+  zoneRef:
+    name: myapp-com
+  name: web.myapp.com.
+  type: AAAA
+  ttl: 300
+  rrdatas:
+    - "2001:db8::1"
+```
+
+### CNAME Records
+
+Create aliases to other domain names:
+
+```yaml
+apiVersion: dns.networking.miloapis.com/v1alpha1
+kind: DNSRecordSet
+metadata:
+  name: www-alias
+  namespace: my-project
+spec:
+  zoneRef:
+    name: myapp-com
+  name: www.myapp.com.
+  type: CNAME
+  ttl: 300
+  rrdatas:
+    - "web.myapp.com."
+```
+
+### MX Records
+
+Define mail exchange servers:
+
+```yaml
+apiVersion: dns.networking.miloapis.com/v1alpha1
+kind: DNSRecordSet
+metadata:
+  name: mail-servers
+  namespace: my-project
+spec:
+  zoneRef:
+    name: myapp-com
+  name: myapp.com.
+  type: MX
+  ttl: 3600
+  rrdatas:
+    - "10 mail1.myapp.com."
+    - "20 mail2.myapp.com."
+```
+
+### TXT Records
+
+Add text records for verification or SPF:
+
+```yaml
+apiVersion: dns.networking.miloapis.com/v1alpha1
+kind: DNSRecordSet
+metadata:
+  name: spf-record
+  namespace: my-project
+spec:
+  zoneRef:
+    name: myapp-com
+  name: myapp.com.
+  type: TXT
+  ttl: 3600
+  rrdatas:
+    - "v=spf1 include:_spf.google.com ~all"
+```
+
+### SRV Records
+
+Define service locations:
+
+```yaml
+apiVersion: dns.networking.miloapis.com/v1alpha1
+kind: DNSRecordSet
+metadata:
+  name: sip-service
+  namespace: my-project
+spec:
+  zoneRef:
+    name: myapp-com
+  name: _sip._tcp.myapp.com.
+  type: SRV
+  ttl: 3600
+  rrdatas:
+    - "10 60 5060 sipserver.myapp.com."
+```
+
+## Quota Management
+
+Datum automatically manages DNS resource quotas at the project level.
+
+### Default Quotas
+
+Personal organization projects receive these default quotas:
+
+- **DNS Zones**: 25 zones per project
+- **DNS Record Sets**: 500 record sets per project
+
+### Checking Quota Usage
+
+View your current quota allocation:
+
+```bash
+# List resource grants for your project
+kubectl get resourcegrant -n milo-system \
+  -l consumer-name=my-project
+
+# View DNS zone quota
+kubectl get resourcegrant default-dns-quota-my-project \
+  -n milo-system -o yaml
+```
+
+Example output:
+
+```yaml
+apiVersion: quota.miloapis.com/v1alpha1
+kind: ResourceGrant
+metadata:
+  name: default-dns-quota-my-project
+  namespace: milo-system
+spec:
+  consumerRef:
+    apiGroup: resourcemanager.miloapis.com
+    kind: Project
+    name: my-project
+  allowances:
+    - resourceType: dns.networking.miloapis.com/dnszones
+      buckets:
+        - amount: 25
+    - resourceType: dns.networking.miloapis.com/dnsrecordsets
+      buckets:
+        - amount: 500
+```
+
+### Quota Enforcement
+
+When you create a DNS resource, a quota claim is automatically created:
+
+```yaml
+apiVersion: quota.miloapis.com/v1alpha1
+kind: ResourceClaim
+metadata:
+  name: dnszone-example-com
+  namespace: my-project
+  annotations:
+    kubernetes.io/description: "Automatic quota claim for DNSZone creation"
+spec:
+  requests:
+    - resourceType: dns.networking.miloapis.com/dnszones
+      amount: 1
+```
+
+If you exceed your quota, the resource creation will be rejected with an error.
+
+## Integration with Workloads
+
+Automate DNS record management for workload instances:
+
+```yaml
+apiVersion: dns.networking.miloapis.com/v1alpha1
+kind: DNSRecordSet
+metadata:
+  name: api-instances
+  namespace: my-project
+spec:
+  zoneRef:
+    name: myapp-com
+  name: api.myapp.com.
+  type: A
+  ttl: 60
+  # Use workload instance IPs
+  rrdatas:
+    - "203.0.113.10"  # instance-0
+    - "203.0.113.11"  # instance-1
+    - "203.0.113.12"  # instance-2
+```
+
+<Tip>
+For dynamic DNS updates based on workload changes, consider using an operator or controller that watches `Instance` resources and updates `DNSRecordSet` resources automatically.
+</Tip>
+
+## Managing DNS Zones
+
+### List DNS Zones
+
+```bash
+# List all DNS zones in a project
+kubectl get dnszone -n my-project
+
+# Get zone details
+kubectl describe dnszone myapp-com -n my-project
+```
+
+### Update DNS Zone
+
+```bash
+# Edit zone description
+kubectl edit dnszone myapp-com -n my-project
+```
+
+### Delete DNS Zone
+
+```bash
+# Delete a DNS zone (and all its record sets)
+kubectl delete dnszone myapp-com -n my-project
+```
+
+<Warning>
+Deleting a DNS zone will also delete all DNS record sets within that zone. This operation cannot be undone.
+</Warning>
+
+## Managing DNS Records
+
+### List DNS Records
+
+```bash
+# List all record sets in a project
+kubectl get dnsrecordset -n my-project
+
+# Filter by zone
+kubectl get dnsrecordset -n my-project \
+  -l zone=myapp-com
+```
+
+### Update DNS Records
+
+```bash
+# Edit record data or TTL
+kubectl edit dnsrecordset www-myapp-com -n my-project
+
+# Or use kubectl patch
+kubectl patch dnsrecordset www-myapp-com -n my-project \
+  --type merge -p '{"spec":{"ttl":600}}'
+```
+
+### Delete DNS Records
+
+```bash
+# Delete a specific record set
+kubectl delete dnsrecordset www-myapp-com -n my-project
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="DNS zone creation fails">
+    Check if you have exceeded your DNS zone quota:
+
+    ```bash
+    kubectl get resourceclaim -n my-project
+    kubectl describe resourcegrant default-dns-quota-my-project -n milo-system
+    ```
+
+    If quota is exceeded, contact support to request an increase.
+  </Accordion>
+
+  <Accordion title="Record set not propagating">
+    Verify the record set was created successfully:
+
+    ```bash
+    kubectl get dnsrecordset -n my-project
+    kubectl describe dnsrecordset <name> -n my-project
+    ```
+
+    Check for validation errors in the resource status. Common issues:
+    - Invalid DNS name format (must end with a dot)
+    - Invalid record data for the record type
+    - Zone reference pointing to a non-existent zone
+  </Accordion>
+
+  <Accordion title="Quota claim denied">
+    This means you've reached your quota limit. View current usage:
+
+    ```bash
+    # Count DNS zones
+    kubectl get dnszone -n my-project --no-headers | wc -l
+
+    # Count DNS record sets
+    kubectl get dnsrecordset -n my-project --no-headers | wc -l
+    ```
+
+    Delete unused resources or request a quota increase.
+  </Accordion>
+</AccordionGroup>
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Use appropriate TTL values">
+    - Use shorter TTLs (60-300 seconds) for records that change frequently
+    - Use longer TTLs (3600+ seconds) for stable records to reduce DNS query load
+    - Lower TTL values before making changes to minimize propagation time
+  </Accordion>
+
+  <Accordion title="Organize records by zone">
+    - Create separate zones for different environments (prod, staging)
+    - Use subdomains for different services (api.example.com, web.example.com)
+    - Label DNS resources for easier management and filtering
+  </Accordion>
+
+  <Accordion title="Monitor quota usage">
+    - Regularly check DNS zone and record set counts
+    - Clean up unused DNS resources
+    - Request quota increases proactively before hitting limits
+  </Accordion>
+
+  <Accordion title="Validate DNS names">
+    - Always end DNS names with a dot (.)
+    - Use fully qualified domain names (FQDNs)
+    - Follow DNS naming conventions (RFC 1035)
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Gateway API" icon="door-open" href="/integrations/gateway-api">
+    Use DNS with Kubernetes Gateway API for traffic routing
+  </Card>
+  <Card title="Quota Management" icon="gauge" href="/operations/quota-management">
+    Learn more about Datum's quota system
+  </Card>
+  <Card title="Projects" icon="folder" href="/concepts/projects">
+    Understand project-level resource isolation
+  </Card>
+  <Card title="Network Services" icon="network-wired" href="/concepts/networks">
+    Explore other network services in Datum
+  </Card>
+</CardGroup>

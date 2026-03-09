@@ -1,0 +1,281 @@
+---
+title: PersonalOrganizationController
+description: Automatically provisions personal organizations and projects for users
+---
+
+## Overview
+
+The `PersonalOrganizationController` watches for User resources and automatically creates:
+
+1. A personal Organization for each user
+2. An OrganizationMembership granting the user owner permissions
+3. A default personal Project within the organization
+
+This ensures every user has a dedicated workspace upon registration approval.
+
+## Reconciliation Logic
+
+The controller performs the following steps during reconciliation:
+
+### 1. User Validation
+
+- Fetches the User resource
+- Skips reconciliation if user is not found or is being deleted
+
+### 2. Personal Organization Creation
+
+<CodeGroup>
+```yaml Organization Spec
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Organization
+metadata:
+  name: personal-org-<hash>
+  annotations:
+    kubernetes.io/display-name: "John Doe's Personal Org"
+    kubernetes.io/description: "John Doe's Personal Org"
+spec:
+  type: Personal
+```
+</CodeGroup>
+
+**Key behaviors:**
+- Name is generated using a hash of the user's UID: `personal-org-<hash>`
+- Display name uses the user's given name and family name
+- Type is set to `Personal` (cannot be changed)
+- Controller reference is set to the User resource (organization is deleted when user is deleted)
+
+### 3. Organization Membership Creation
+
+<CodeGroup>
+```yaml OrganizationMembership Spec
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: OrganizationMembership
+metadata:
+  name: membership-<username>
+  namespace: organization-<org-name>
+spec:
+  organizationRef:
+    name: personal-org-<hash>
+  userRef:
+    name: <username>
+  roles:
+    - name: datum-cloud-owner
+      namespace: datum-assignable-organization-roles
+```
+</CodeGroup>
+
+**Key behaviors:**
+- Created in the organization's namespace
+- Grants the configured owner role to the user
+- Default role: `datum-cloud-owner` in namespace `datum-assignable-organization-roles`
+
+### 4. Personal Project Creation
+
+<CodeGroup>
+```yaml Project Spec
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Project
+metadata:
+  name: personal-project-<hash>
+  annotations:
+    kubernetes.io/display-name: "Personal Project"
+    kubernetes.io/description: "John Doe's Personal Project"
+```
+</CodeGroup>
+
+**Key behaviors:**
+- Only created if user's registration approval is `Approved`
+- Uses user impersonation to trigger project webhook correctly
+- Project webhook automatically creates PolicyBinding granting ownership
+- Requeues every 5 seconds if user is not yet approved
+
+## Configuration
+
+The controller is configured via the `DatumControllerManager` configuration:
+
+<ParamField path="personalOrganizationController.roleName" type="string" required>
+  The name of the role to assign to users for their personal organization.
+  
+  Default: `datum-cloud-owner`
+</ParamField>
+
+<ParamField path="personalOrganizationController.roleNamespace" type="string" required>
+  The namespace where the role exists.
+  
+  Default: `datum-assignable-organization-roles`
+</ParamField>
+
+### Example Configuration
+
+```yaml
+apiVersion: config.datumapis.com/v1alpha1
+kind: DatumControllerManager
+personalOrganizationController:
+  roleName: datum-cloud-owner
+  roleNamespace: datum-assignable-organization-roles
+```
+
+## RBAC Permissions
+
+The controller requires the following Kubernetes RBAC permissions:
+
+<ResponseField name="iam.datumapis.com/users" type="resources">
+  **Verbs:** `get`, `list`, `watch`
+  
+  Required to watch User resources and retrieve user information.
+</ResponseField>
+
+<ResponseField name="resourcemanager.datumapis.com/organizations" type="resources">
+  **Verbs:** `create`
+  
+  Required to create personal organizations.
+</ResponseField>
+
+<ResponseField name="resourcemanager.datumapis.com/projects" type="resources">
+  **Verbs:** `create`, `get`, `list`, `watch`, `update`, `patch`
+  
+  Required to create and manage personal projects.
+</ResponseField>
+
+## Reconciliation Behavior
+
+### Idempotency
+
+The controller uses `CreateOrUpdate` operations, making reconciliation idempotent:
+- Organizations are only created once per user
+- Existing resources are updated if specifications change
+- Safe to run multiple reconciliation loops
+
+### User Impersonation
+
+For project creation, the controller impersonates the user to ensure:
+- Project webhook sees the correct user identity
+- PolicyBinding is created with the right owner
+- Proper RBAC validation occurs
+
+**Impersonation configuration:**
+```go
+impersonatedConfig.Impersonate = rest.ImpersonationConfig{
+    UserName: user.Spec.Email,
+    UID:      user.Name,
+    Groups:   []string{"system:authenticated"},
+    Extra: map[string][]string{
+        "iam.miloapis.com/parent-name":      {personalOrg.Name},
+        "iam.miloapis.com/parent-type":      {"Organization"},
+        "iam.miloapis.com/parent-api-group": {"resourcemanager.miloapis.com"},
+    },
+}
+```
+
+### Requeue Logic
+
+<ResponseField name="User not approved" type="requeue">
+  **RequeueAfter:** 5 seconds
+  
+  If the user's registration approval is not `Approved`, the controller requeues to check again later.
+</ResponseField>
+
+<ResponseField name="Success" type="no-requeue">
+  **RequeueAfter:** Never
+  
+  Successful reconciliation does not trigger automatic requeue. The controller only reconciles on User resource changes.
+</ResponseField>
+
+## Error Handling
+
+### User Not Found
+
+```go
+if apierrors.IsNotFound(err) {
+    logger.Info("User not found, skipping reconciliation")
+    return ctrl.Result{}, nil
+}
+```
+
+Skips reconciliation without error when the user is deleted.
+
+### Project Already Exists
+
+```go
+if apierrors.IsAlreadyExists(err) {
+    logger.Info("Personal project already exists (race)")
+}
+```
+
+Handles race conditions where multiple reconciliation loops attempt to create the same project.
+
+### User Being Deleted
+
+```go
+if !user.DeletionTimestamp.IsZero() {
+    logger.Info("User is being deleted, skipping reconciliation")
+    return ctrl.Result{}, nil
+}
+```
+
+Skips reconciliation for users that are being deleted.
+
+## Hash Generation
+
+The controller uses FNV-32a hashing to generate unique, deterministic names:
+
+```go
+func hashPersonalOrgName(name string) string {
+    hasher := fnv.New32a()
+    hasher.Write([]byte(name))
+    return hex.EncodeToString(hasher.Sum(nil))
+}
+```
+
+This ensures:
+- Consistent naming across reconciliation loops
+- No name collisions between users
+- Human-readable hash format (8 hex characters)
+
+## Watch Configuration
+
+The controller watches User resources:
+
+```go
+ctrl.NewControllerManagedBy(mgr).
+    For(&iamv1alpha1.User{}).
+    Named("personal-organization").
+    Complete(r)
+```
+
+**Trigger events:**
+- User creation
+- User updates (e.g., registration approval changes)
+- Does NOT watch Organization or Project resources directly
+
+## Examples
+
+### Viewing Created Resources
+
+```bash
+# List all personal organizations
+kubectl get organizations -l type=Personal
+
+# Get details for a specific user's organization
+kubectl get organization personal-org-<hash> -o yaml
+
+# View organization memberships
+kubectl get organizationmemberships -n organization-personal-org-<hash>
+
+# List personal projects
+kubectl get projects -l owner=<username>
+```
+
+### Monitoring Controller Logs
+
+```bash
+# Follow controller logs
+kubectl logs -f deployment/datum-controller-manager -n datum-system
+
+# Filter for personal organization reconciliation
+kubectl logs deployment/datum-controller-manager -n datum-system | grep "personal-organization"
+```
+
+## Source Reference
+
+Source: `internal/controller/resourcemanager/personal_organization_controller.go:37-215`

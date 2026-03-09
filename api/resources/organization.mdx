@@ -1,0 +1,385 @@
+---
+title: Organization
+description: Organization custom resource definition for resource hierarchy
+---
+
+## Overview
+
+The `Organization` custom resource represents a top-level container for projects and resources. Organizations provide isolation, quota management, and access control boundaries.
+
+<Note>
+  Organization resources are part of the Milo resource manager API group (`resourcemanager.miloapis.com/v1alpha1`).
+</Note>
+
+## Resource Definition
+
+```yaml
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Organization
+metadata:
+  name: my-org
+spec:
+  type: Standard
+```
+
+## API Group
+
+<ResponseField name="apiVersion" type="string" required>
+  `resourcemanager.miloapis.com/v1alpha1`
+</ResponseField>
+
+<ResponseField name="kind" type="string" required>
+  `Organization`
+</ResponseField>
+
+## Organization Types
+
+Organizations can be one of two types:
+
+<CardGroup cols={2}>
+  <Card title="Personal" icon="user">
+    Automatically created for each user. Cannot be deleted or modified. Used for individual user workspaces.
+  </Card>
+  <Card title="Standard" icon="building">
+    Created by users for teams and companies. Can have multiple members with different roles.
+  </Card>
+</CardGroup>
+
+## Metadata
+
+<ParamField path="metadata.name" type="string" required>
+  The name of the organization. Must be globally unique.
+  
+  **Personal organizations:** Named `personal-org-<hash>` (automatically generated)
+  
+  **Standard organizations:** User-chosen name
+</ParamField>
+
+<ParamField path="metadata.annotations" type="object">
+  Annotations for organization metadata.
+  
+  **Standard annotations:**
+  - `kubernetes.io/display-name`: Display name for UIs
+  - `kubernetes.io/description`: Organization description
+  
+  **Example:**
+  ```yaml
+  annotations:
+    kubernetes.io/display-name: "Acme Corporation"
+    kubernetes.io/description: "Engineering organization for Acme Corp"
+  ```
+</ParamField>
+
+<ParamField path="metadata.ownerReferences" type="array">
+  Owner references (used for personal organizations).
+  
+  Personal organizations have a controller reference to the User resource, ensuring the organization is deleted when the user is deleted.
+</ParamField>
+
+## Spec Fields
+
+<ParamField path="spec.type" type="string" required>
+  The type of organization.
+  
+  **Values:**
+  - `Personal`: Personal organization (one per user)
+  - `Standard`: Team/company organization
+  
+  <Warning>
+    Personal organizations cannot change their type or display name. This is enforced by a ValidatingAdmissionPolicy.
+  </Warning>
+</ParamField>
+
+## Status Fields
+
+The Organization status reflects the current state:
+
+<ResponseField name="status.phase" type="string">
+  The current phase of the organization.
+  
+  **Values:**
+  - `Active`: Organization is active and ready
+  - `Pending`: Organization is being set up
+  - `Deleting`: Organization is being deleted
+</ResponseField>
+
+<ResponseField name="status.namespace" type="string">
+  The namespace created for this organization: `organization-<name>`
+  
+  All organization-scoped resources are created in this namespace.
+</ResponseField>
+
+<ResponseField name="status.conditions" type="array">
+  Detailed conditions about the organization state.
+  
+  Each condition includes:
+  - `type`: Condition type (e.g., "Ready")
+  - `status`: True, False, or Unknown
+  - `reason`: Machine-readable reason code
+  - `message`: Human-readable message
+  - `lastTransitionTime`: When the condition last changed
+</ResponseField>
+
+## Quota Management
+
+Organizations act as quota consumers. Quotas are granted to organizations and claimed by projects within the organization.
+
+### Project Quota
+
+Organizations have a quota for the number of projects they can create:
+
+```yaml
+apiVersion: quota.miloapis.com/v1alpha1
+kind: ResourceRegistration
+metadata:
+  name: projects-per-organization
+spec:
+  consumerType:
+    apiGroup: resourcemanager.miloapis.com
+    kind: Organization
+  type: Entity
+  resourceType: resourcemanager.miloapis.com/projects
+  baseUnit: project
+  displayUnit: projects
+```
+
+**Default quotas:**
+- Personal organizations: Limited project quota
+- Standard organizations: Higher default quota, can be increased
+
+## Organization Membership
+
+Users are granted access to organizations via `OrganizationMembership` resources:
+
+```yaml
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: OrganizationMembership
+metadata:
+  name: membership-john
+  namespace: organization-my-org
+spec:
+  organizationRef:
+    name: my-org
+  userRef:
+    name: john-user-id
+  roles:
+  - name: datum-cloud-owner
+    namespace: datum-assignable-organization-roles
+```
+
+### Standard Roles
+
+<ResponseField name="datum-cloud-owner" type="role">
+  Full control over the organization and all its resources.
+  
+  **Permissions:**
+  - Create/delete projects
+  - Manage organization members
+  - View/edit all resources
+  - Manage quotas
+</ResponseField>
+
+<ResponseField name="datum-cloud-editor" type="role">
+  Can create and manage resources but cannot manage organization settings.
+  
+  **Permissions:**
+  - Create/edit resources
+  - View organization details
+  - Cannot manage members or quotas
+</ResponseField>
+
+<ResponseField name="datum-cloud-viewer" type="role">
+  Read-only access to organization resources.
+  
+  **Permissions:**
+  - View all resources
+  - Cannot create/edit/delete
+</ResponseField>
+
+## Validation Policies
+
+### Personal Organization Protection
+
+Personal organizations have special validation rules:
+
+```yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: disallow-personal-org-name-change
+spec:
+  validations:
+  - expression: "object.spec.type != 'Personal' || oldObject.metadata.annotations['kubernetes.io/display-name'] == object.metadata.annotations['kubernetes.io/display-name']"
+    message: "The display name of a personal organization cannot be changed."
+```
+
+**Protected fields for Personal organizations:**
+- `metadata.annotations['kubernetes.io/display-name']`
+- `spec.type`
+
+## Examples
+
+### Standard Organization
+
+```yaml
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Organization
+metadata:
+  name: acme-corp
+  annotations:
+    kubernetes.io/display-name: "Acme Corporation"
+    kubernetes.io/description: "Main engineering organization"
+spec:
+  type: Standard
+```
+
+### Personal Organization (Auto-created)
+
+```yaml
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Organization
+metadata:
+  name: personal-org-a1b2c3d4
+  annotations:
+    kubernetes.io/display-name: "John Doe's Personal Org"
+    kubernetes.io/description: "John Doe's Personal Org"
+  ownerReferences:
+  - apiVersion: iam.miloapis.com/v1alpha1
+    kind: User
+    name: user-12345
+    uid: 12345-67890
+    controller: true
+spec:
+  type: Personal
+```
+
+### Organization with Membership
+
+Create an organization and add a member:
+
+```yaml
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: Organization
+metadata:
+  name: my-team
+  annotations:
+    kubernetes.io/display-name: "My Team"
+spec:
+  type: Standard
+---
+apiVersion: resourcemanager.miloapis.com/v1alpha1
+kind: OrganizationMembership
+metadata:
+  name: membership-alice
+  namespace: organization-my-team
+spec:
+  organizationRef:
+    name: my-team
+  userRef:
+    name: alice-user-id
+  roles:
+  - name: datum-cloud-owner
+    namespace: datum-assignable-organization-roles
+```
+
+## kubectl Commands
+
+### List Organizations
+
+```bash
+# List all organizations
+kubectl get organizations
+
+# List personal organizations
+kubectl get organizations -l type=Personal
+
+# List standard organizations
+kubectl get organizations -l type=Standard
+
+# Custom columns
+kubectl get organizations \
+  -o custom-columns=NAME:.metadata.name,TYPE:.spec.type,DISPLAY:.metadata.annotations['kubernetes\.io/display-name']
+```
+
+### Get Organization Details
+
+```bash
+# Get full specification
+kubectl get organization my-org -o yaml
+
+# Get organization status
+kubectl get organization my-org -o jsonpath='{.status}'
+
+# Describe with events
+kubectl describe organization my-org
+```
+
+### Create Standard Organization
+
+```bash
+kubectl apply -f organization.yaml
+```
+
+### View Organization Members
+
+```bash
+# List memberships in an organization
+kubectl get organizationmemberships -n organization-my-org
+
+# Get membership details
+kubectl describe organizationmembership membership-alice -n organization-my-org
+```
+
+### Delete Organization
+
+```bash
+# Delete standard organization
+kubectl delete organization my-org
+
+# Personal organizations cannot be deleted directly
+# They are deleted when the user is deleted
+```
+
+## Related Resources
+
+- [Project](/api/resources/project) - Projects are created within organizations
+- [PersonalOrganizationController](/api/controllers/personal-organization) - Manages personal organization lifecycle
+
+## Troubleshooting
+
+<Accordion title="Cannot create organization">
+  **Check:**
+  1. Verify you have permission to create organizations
+  2. Check if the name is already taken: `kubectl get organization <name>`
+  3. Ensure the name follows Kubernetes naming conventions (lowercase, alphanumeric, hyphens)
+  4. Check quota limits
+</Accordion>
+
+<Accordion title="Personal organization missing">
+  **Check:**
+  1. Verify the PersonalOrganizationController is running
+  2. Check user status: `kubectl get user <name> -o yaml`
+  3. View controller logs: `kubectl logs -n datum-system deployment/datum-controller-manager`
+  4. Ensure user registration is approved
+</Accordion>
+
+<Accordion title="Cannot modify personal organization">
+  **Personal organizations have restrictions:**
+  - Display name cannot be changed
+  - Type cannot be changed
+  - Organization cannot be deleted (deleted with user)
+  
+  This is enforced by ValidatingAdmissionPolicy and is by design.
+</Accordion>
+
+<Accordion title="Member cannot access organization resources">
+  **Check:**
+  1. Verify membership exists: `kubectl get organizationmemberships -n organization-<name>`
+  2. Check assigned roles in the membership spec
+  3. Verify the role exists: `kubectl get role <role-name> -n <role-namespace>`
+  4. Check PolicyBindings: `kubectl get policybindings -n organization-<name>`
+</Accordion>
+
+## Source Reference
+
+Source: `internal/controller/resourcemanager/personal_organization_controller.go:80-100`

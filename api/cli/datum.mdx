@@ -1,0 +1,79 @@
+---
+title: datum
+description: Root command for Datum control plane tooling
+---
+
+## Overview
+
+The `datum` CLI is the entry point for Datum control plane tooling, providing AI-native infrastructure orchestration capabilities. It extends the Milo control plane with Datum Cloud-specific functionality.
+
+## Usage
+
+```bash
+datum [subcommand] [flags]
+```
+
+## Description
+
+Datum is building the internet for AI - a neutral, programmable middle layer where companies can programmatically connect without building the entire stack themselves.
+
+This component provides tooling for extending the Milo control plane with Datum Cloud specific functionality.
+
+## Available Subcommands
+
+<ResponseField name="controller-manager" type="subcommand">
+  Run the Datum control plane controller manager. See [datum controller-manager](/api/cli/controller) for details.
+</ResponseField>
+
+## Global Flags
+
+The `datum` command inherits standard logging flags from the zap logger:
+
+<ParamField path="--zap-devel" type="boolean" default="false">
+  Enable development mode for the zap logger
+</ParamField>
+
+<ParamField path="--zap-encoder" type="string" default="json">
+  Zap log encoding (one of 'json' or 'console')
+</ParamField>
+
+<ParamField path="--zap-log-level" type="string" default="info">
+  Zap Level to configure the verbosity of logging. Can be one of 'debug', 'info', 'error', or any integer value > 0
+</ParamField>
+
+<ParamField path="--zap-stacktrace-level" type="string" default="error">
+  Zap Level at and above which stacktraces are captured (one of 'info', 'error', 'panic')
+</ParamField>
+
+<ParamField path="--zap-time-encoding" type="string" default="epoch">
+  Zap time encoding (one of 'epoch', 'millis', 'nano', 'iso8601', 'rfc3339' or 'rfc3339nano')
+</ParamField>
+
+## Examples
+
+### Display help information
+
+```bash
+datum --help
+```
+
+### Run the controller manager
+
+```bash
+datum controller-manager \
+  --metrics-bind-address=:8443 \
+  --health-probe-bind-address=:8081 \
+  --leader-elect
+```
+
+### Run with debug logging
+
+```bash
+datum controller-manager \
+  --zap-log-level=debug \
+  --zap-encoder=console
+```
+
+## Source Reference
+
+Source: `cmd/main.go:14-22`

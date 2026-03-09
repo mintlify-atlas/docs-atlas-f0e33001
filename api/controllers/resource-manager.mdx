@@ -1,0 +1,223 @@
+---
+title: Resource Manager Controllers
+description: Overview of resource management controllers in Datum Cloud
+---
+
+## Overview
+
+The Resource Manager controllers are responsible for managing resource lifecycle and ensuring proper resource hierarchy in Datum Cloud. These controllers work with the Milo resource management API groups.
+
+## Available Controllers
+
+### PersonalOrganizationController
+
+The primary resource management controller that provisions personal organizations and projects for users.
+
+**See:** [PersonalOrganizationController](/api/controllers/personal-organization) for detailed documentation.
+
+**Managed Resources:**
+- Organizations (type: Personal)
+- OrganizationMemberships
+- Projects (personal projects)
+
+**Key Responsibilities:**
+- Automatic provisioning of user workspaces
+- Role assignment for organization owners
+- User impersonation for proper RBAC validation
+
+## Controller Architecture
+
+Resource Manager controllers are built using the controller-runtime framework and follow Kubernetes controller patterns:
+
+### Reconciliation Loop
+
+```go
+func (r *Controller) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+    // 1. Fetch the resource
+    // 2. Validate the resource state
+    // 3. Create or update dependent resources
+    // 4. Update status if needed
+    // 5. Return result (requeue or success)
+}
+```
+
+### Manager Setup
+
+Controllers are registered with the controller manager:
+
+```go
+if err = (&PersonalOrganizationController{
+    Client:     mgr.GetClient(),
+    Config:     serverConfig.PersonalOrganizationController,
+    Scheme:     mgr.GetScheme(),
+    RestConfig: mgr.GetConfig(),
+}).SetupWithManager(mgr); err != nil {
+    return err
+}
+```
+
+## API Groups
+
+Resource Manager controllers work with these Milo API groups:
+
+<ResponseField name="resourcemanager.miloapis.com" type="api-group">
+  **Version:** v1alpha1
+  
+  Core resource management types:
+  - Organization
+  - OrganizationMembership
+  - Project
+</ResponseField>
+
+<ResponseField name="iam.miloapis.com" type="api-group">
+  **Version:** v1alpha1
+  
+  Identity and access management types:
+  - User
+  - Role
+  - PolicyBinding
+</ResponseField>
+
+## Configuration
+
+Resource Manager controllers are configured through the `DatumControllerManager` configuration resource:
+
+```yaml
+apiVersion: config.datumapis.com/v1alpha1
+kind: DatumControllerManager
+personalOrganizationController:
+  roleName: datum-cloud-owner
+  roleNamespace: datum-assignable-organization-roles
+```
+
+### Configuration Fields
+
+<ParamField path="personalOrganizationController" type="object">
+  Configuration for the PersonalOrganizationController.
+  
+  <Expandable title="Fields">
+    <ParamField path="roleName" type="string" required>
+      The role to assign to users for their personal organization.
+    </ParamField>
+    
+    <ParamField path="roleNamespace" type="string" required>
+      The namespace where the role exists.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Resource Quotas
+
+Resource Manager controllers work with the quota system to enforce resource limits:
+
+### Project Quota
+
+```yaml
+apiVersion: quota.miloapis.com/v1alpha1
+kind: ResourceRegistration
+metadata:
+  name: projects-per-organization
+spec:
+  consumerType:
+    apiGroup: resourcemanager.miloapis.com
+    kind: Organization
+  type: Entity
+  resourceType: resourcemanager.miloapis.com/projects
+  baseUnit: project
+  displayUnit: projects
+  claimingResources:
+    - apiGroup: resourcemanager.miloapis.com
+      kind: Project
+```
+
+**Quota enforcement:**
+- Personal organizations have default project quotas
+- Standard organizations can be granted additional quota
+- Projects claim quota from their parent organization
+
+## Validation Policies
+
+Resource Manager controllers respect validation policies:
+
+### Organization Updates
+
+```yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: disallow-personal-org-name-change
+spec:
+  validations:
+  - expression: "object.spec.type != 'Personal' || oldObject.metadata.annotations['kubernetes.io/display-name'] == object.metadata.annotations['kubernetes.io/display-name']"
+    message: "The display name of a personal organization cannot be changed."
+```
+
+### Project Name Validation
+
+```yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: validate-project-name
+spec:
+  validations:
+  - expression: "size(object.metadata.name) >= 6"
+    message: "Project name must be at least 6 characters long."
+  - expression: "size(object.metadata.name) <= 30"
+    message: "Project name must not exceed 30 characters."
+  - expression: "!object.metadata.name.contains('datum')"
+    message: "Project name cannot contain 'datum'."
+```
+
+## Monitoring
+
+### Controller Metrics
+
+Resource Manager controllers expose standard controller-runtime metrics:
+
+- `controller_runtime_reconcile_total` - Total reconciliation count
+- `controller_runtime_reconcile_errors_total` - Failed reconciliation count
+- `controller_runtime_reconcile_time_seconds` - Reconciliation duration
+
+### Health Checks
+
+The controller manager provides health endpoints:
+
+```bash
+# Check liveness
+curl http://localhost:8081/healthz
+
+# Check readiness
+curl http://localhost:8081/readyz
+```
+
+## Troubleshooting
+
+### Common Issues
+
+<Accordion title="Organization not created for new user">
+  **Check:**
+  1. Verify the user resource exists: `kubectl get users`
+  2. Check controller logs for errors: `kubectl logs -n datum-system deployment/datum-controller-manager`
+  3. Ensure the controller has proper RBAC permissions
+  4. Verify the user is not being deleted (has no deletionTimestamp)
+</Accordion>
+
+<Accordion title="Personal project not created">
+  **Check:**
+  1. Verify user registration approval: `kubectl get user <name> -o jsonpath='{.status.registrationApproval}'`
+  2. User must have approval state `Approved`
+  3. Check for impersonation errors in controller logs
+  4. Verify the parent organization exists and is ready
+</Accordion>
+
+<Accordion title="Role assignment failed">
+  **Check:**
+  1. Verify the configured role exists: `kubectl get role datum-cloud-owner -n datum-assignable-organization-roles`
+  2. Check the controller configuration has correct roleName and roleNamespace
+  3. Ensure the organization namespace was created
+</Accordion>
+
+## Source Reference
+
+Source: `internal/controller/resourcemanager/`
