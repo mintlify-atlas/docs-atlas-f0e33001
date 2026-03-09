@@ -309,12 +309,7 @@ kubectl port-forward -n monitoring svc/prometheus-k8s 9090:9090
 
 ### Import Pre-built Dashboard
 
-Download and import the Datum dashboard:
-
-```bash
-# Coming soon
-curl -Lo datum-dashboard.json https://github.com/datum-cloud/datum/releases/latest/download/grafana-dashboard.json
-```
+You can create custom Grafana dashboards using the metrics exposed by Datum controllers. Import them through the Grafana UI or use the JSON import feature.
 
 ## Alerting
 
