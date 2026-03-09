@@ -1,0 +1,123 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "Datum Cloud",
+  "projectDescription": "An open network cloud that you can run anywhere, backed by open source.",
+  "theme": "aspen",
+  "primaryColor": "#0d1d33",
+  "lightColor": "#e2f1a2",
+  "darkColor": "#849474",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/networks",
+              "concepts/workloads",
+              "concepts/gateways",
+              "concepts/organizations",
+              "concepts/projects"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/installation",
+              "deployment/kubernetes-setup",
+              "deployment/configuration"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/managing-resources",
+              "operations/quota-management",
+              "operations/monitoring",
+              "operations/security"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "CLI",
+            "pages": [
+              "api/cli/datum",
+              "api/cli/controller"
+            ]
+          },
+          {
+            "group": "Controllers",
+            "pages": [
+              "api/controllers/personal-organization",
+              "api/controllers/resource-manager"
+            ]
+          },
+          {
+            "group": "Custom Resources",
+            "pages": [
+              "api/resources/network",
+              "api/resources/workload",
+              "api/resources/gateway",
+              "api/resources/organization",
+              "api/resources/project"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Integrations",
+        "groups": [
+          {
+            "group": "Infrastructure Providers",
+            "pages": [
+              "integrations/overview",
+              "integrations/gcp",
+              "integrations/custom-providers"
+            ]
+          },
+          {
+            "group": "Network Services",
+            "pages": [
+              "integrations/dns",
+              "integrations/gateway-api"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Kubernetes-native infrastructure control plane",
+    "Declarative resource management with kubectl",
+    "Multi-cloud workload orchestration",
+    "Provider-agnostic networking and compute",
+    "Automated personal organization provisioning",
+    "Kubernetes Gateway API integration",
+    "IAM and quota management",
+    "DNS and network services"
+  ],
+  "publicApiSurface": [
+    "datum controller",
+    "Network (Custom Resource)",
+    "Workload (Custom Resource)",
+    "Gateway (Custom Resource)",
+    "Organization (Custom Resource)",
+    "Project (Custom Resource)",
+    "PersonalOrganizationController",
+    "kubectl apply/get/delete",
+    "kustomize build"
+  ]
+}
